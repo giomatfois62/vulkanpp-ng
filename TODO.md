@@ -1,7 +1,5 @@
 - load gltf material textures
-- mesh constructor with vertices + compute AABB
 - instances + lights octrees
-- frustrum culling
 - clustered/deferred shading
 - pbr material + rendering
 - skybox textures
@@ -49,3 +47,5 @@ DONE
 - load gltf mesh OK
 - offscreen rendering OK
 - remove bitangent OK
+- mesh constructor with vertices + compute AABB OK
+- frustrum culling OK
