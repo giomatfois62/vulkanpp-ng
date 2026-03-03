@@ -333,6 +333,7 @@ void Application::processEvent(const SDL_Event& e)
 
     if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
         SDL_SetRelativeMouseMode((SDL_bool)paused);
+        //SDL_CaptureMouse((SDL_bool)!paused);
         paused = !paused;
 
         if (!paused) {
@@ -359,8 +360,8 @@ void Application::processEvent(const SDL_Event& e)
             firstMouse = false;         // Disable special handling for subsequent calls
         }
 
-        float xoffset = xpos - lastX;                   // Horizontal movement (left-right)
-        float yoffset = lastY - ypos;
+        float xoffset = e.motion.xrel;  //xpos - lastX;
+        float yoffset = -e.motion.yrel; //lastY - ypos;
 
         lastX = xpos;
         lastY = ypos;
