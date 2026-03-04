@@ -20,8 +20,20 @@ struct Material {
     uint32_t ambientTex = 0;
     uint32_t diffuseTex = 0;
     uint32_t specularTex = 0;
-    uint32_t bumpTex = 0;
+    uint32_t normalTex = 0;
     uint32_t pad[3];
+};
+
+struct PBRMaterial {
+    float baseColor[4] = { 1.0f, 1.0f, 1.0f };
+    float metallic = 1.0f;
+    float roughness = 1.0f;
+    uint32_t baseColorTex = 0;
+    uint32_t metallicRoughnessTex = 0;
+    uint32_t normalTex = 0;
+    uint32_t occlusionTex = 0;
+    uint32_t pad[2];
+    // TODO: emissive, transmission, glossiness, alphamask
 };
 
 struct VertexInputDescription {

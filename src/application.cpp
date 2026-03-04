@@ -20,7 +20,8 @@ using namespace vke;
 Application::Application(int argc, char **argv) :
 	Engine(argc, argv)
 {
-    clearValue.color = { {0.03f, 0.03f, 0.03f, 1.0f} };
+    //clearValue.color = { {0.03f, 0.03f, 0.03f, 1.0f} };
+    clearValue.color = { {0.00f, 0.00f, 0.00f, 1.0f} };
 
     //camera = Camera(glm::vec3(0.0f, 1.0f, 3.0f));
     camera = Camera(glm::vec3(0.0f, 1.0f, 155.0f));
@@ -578,7 +579,7 @@ void Application::loadTestScene()
         mesh.drawDataBuffers.createStorage(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
     }
 
-    assets.materials.items[0].bumpTex = loadTexture("res/textures/brickwall_normal.jpg", VK_FORMAT_R8G8B8A8_UNORM);
+    assets.materials.items[0].normalTex = loadTexture("res/textures/brickwall_normal.jpg", VK_FORMAT_R8G8B8A8_UNORM);
     assets.materials.items[0].diffuseTex = loadTexture("res/textures/brickwall.jpg");
 }
 

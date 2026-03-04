@@ -432,7 +432,7 @@ Model Engine::loadOBJ(const std::string &path)
             .diffuseTex = loadMaterialTexture(mat.diffuse_texname),
             .specularTex = loadMaterialTexture(mat.specular_texname),
             // prefer normal_tex, specify linear image format
-            .bumpTex = loadMaterialTexture(mat.normal_texname.size() ? mat.normal_texname : mat.bump_texname, VK_FORMAT_R8G8B8A8_UNORM),
+            .normalTex = loadMaterialTexture(mat.normal_texname.size() ? mat.normal_texname : mat.bump_texname, VK_FORMAT_R8G8B8A8_UNORM),
         };
 
         loadedMaterials.push_back(storeMaterial(material));
@@ -520,6 +520,34 @@ Model Engine::loadGLTF(const std::string &path)
     }
 
     std::vector<Mesh> meshes;
+    std::vector<uint32_t> loadedMaterials;
+    std::map<std::string,uint32_t> loadedTextures;
+
+    auto loadGltfTexture = [&](uint32_t textureIndex, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) {
+        if (textureIndex < 0)
+            return 0;
+
+        auto gltfTexture = model.textures[textureIndex];
+        auto imageIndex = gltfTexture.source;
+        auto image = model.images[imageIndex];
+
+        return 0;
+    };
+
+    for (const auto& gltfMat : model.materials) {
+        PBRMaterial mat {
+            .baseColor = {
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[0]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[1]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[2]),
+                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[3]),
+            },
+            .metallic = static_cast<float>(gltfMat.pbrMetallicRoughness.metallicFactor),
+            .roughness = static_cast<float>(gltfMat.pbrMetallicRoughness.roughnessFactor),
+            // TODO: assign textures
+        };
+        // TODO: store material
+    }
 
     for (const auto& mesh : model.meshes) {
         std::vector<Vertex> vertices;
