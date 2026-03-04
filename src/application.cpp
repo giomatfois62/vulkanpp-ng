@@ -83,7 +83,8 @@ void Application::draw(VkCommandBuffer cmd)
         .resolveImageView = msaaEnabled() ? drawImage.view : VK_NULL_HANDLE,
         .resolveImageLayout = msaaEnabled() ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, //VK_ATTACHMENT_STORE_OP_STORE,
+        // on nvidia ".storeOp = OP_DONT_CARE" doesn't work without MSAA
+        .storeOp = msaaEnabled() ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue = clearValue
     };
 
