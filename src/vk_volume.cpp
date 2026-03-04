@@ -98,10 +98,15 @@ vke::Volume::Volume(const Sphere &sphere)
 
 vke::Volume vke::Volume::transformed(const glm::mat4 &transform) const
 {
-    return Volume(
-        transform * glm::vec4(min, 1.0f),
-        transform * glm::vec4(max, 1.0f)
+    glm::vec3 scale(
+        glm::length(glm::vec3(transform[0])), // Scale X
+        glm::length(glm::vec3(transform[1])), // Scale Y
+        glm::length(glm::vec3(transform[2]))  // Scale Z
     );
+
+    glm::vec3 pos(transform[3]);
+
+    return scaled(scale).translated(pos);
 }
 
 vke::Volume vke::Volume::scaled(const glm::vec3 &scale) const
