@@ -171,3 +171,37 @@ TextureData vke::loadTextureDataKtx(const std::string &path)
 
     return data;
 }
+
+TextureData vke::loadTextureDataKtx(const uint8_t *texData, size_t texSize)
+{
+    ktxTexture* ktxTexture = nullptr;
+    ktxTexture_CreateFromMemory(texData, texSize, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTexture);
+
+    if (!ktxTexture){
+        throw std::runtime_error("Failed loading ktx data from memory");
+    }
+
+    TextureData data = {
+        .pixels = { ktxTexture->pData, ktxTexture->pData + ktxTexture->dataSize },
+        .imageSize = ktxTexture->dataSize,
+        .format = ktxTexture_GetVkFormat(ktxTexture), // TODO: force to srgb if ktx-1
+        .extent = { .width = ktxTexture->baseWidth, .height = ktxTexture->baseWidth, .depth = 1 },
+        .mipLevels = ktxTexture->numLevels,
+        .arrayLayers = ktxTexture->numLayers,
+        .hasMipmaps = ktxTexture->numLevels > 1
+    };
+
+    data.offsets.resize(data.arrayLayers);
+
+    for (uint32_t layer = 0; layer < data.arrayLayers; ++layer) {
+        for (uint32_t mip = 0; mip < data.mipLevels; ++mip) {
+            size_t mipOffset = 0;
+            ktxTexture_GetImageOffset(ktxTexture, mip, layer, 0, &mipOffset);
+            data.offsets[layer].push_back(mipOffset);
+        }
+    }
+
+    ktxTexture_Destroy(ktxTexture);
+
+    return data;
+}

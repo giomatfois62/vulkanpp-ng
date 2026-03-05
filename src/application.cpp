@@ -585,6 +585,10 @@ void Application::loadTestScene()
 
 void Application::loadPlanetScene()
 {
+    //auto model2 = loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/FlightHelmet/glTF/FlightHelmet.gltf");
+    auto model2 = loadGLTF("res/objects/gltf/voyager.gltf");
+
+
     planet = loadOBJ("res/objects/planet/planet.obj");
     rock = loadOBJ("res/objects/rock/rock.obj");
 

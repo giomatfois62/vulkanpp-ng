@@ -12,8 +12,8 @@ struct TextureData {
     size_t imageSize;
     VkFormat format;
     VkExtent3D extent;
-    uint32_t mipLevels;
-    uint32_t arrayLayers;
+    uint32_t mipLevels = 1;
+    uint32_t arrayLayers = 1;
     std::vector<std::vector<size_t>> offsets;
     bool cubeMap = false;
     bool hasMipmaps = false;
@@ -29,6 +29,8 @@ struct Texture {
 TextureData loadTextureDataStb(const std::string &path, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);
 
 TextureData loadTextureDataKtx(const std::string &path);
+
+TextureData loadTextureDataKtx(const uint8_t* data, size_t size);
 
 TextureData loadTextureData(const std::string &path, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);
 

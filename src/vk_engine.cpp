@@ -379,6 +379,11 @@ uint32_t Engine::storeMaterial(Material material)
     return assets.materials.insert(material);
 }
 
+uint32_t Engine::storePBRMaterial(PBRMaterial material)
+{
+    return assets.pbrMaterials.insert(material);
+}
+
 Model Engine::loadModel(const std::string &path)
 {
     std::string extension = getFileExtension(path);
@@ -520,33 +525,72 @@ Model Engine::loadGLTF(const std::string &path)
     }
 
     std::vector<Mesh> meshes;
-    std::vector<uint32_t> loadedMaterials;
-    std::map<std::string,uint32_t> loadedTextures;
+    std::map<int,uint32_t> loadedMaterials;
+    std::map<int,uint32_t> loadedTextures;
 
-    auto loadGltfTexture = [&](uint32_t textureIndex, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) {
+    auto loadMaterialTexture = [&](int textureIndex, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) {
+        uint32_t id = 0;
+
         if (textureIndex < 0)
-            return 0;
+            return id;
+
+        if (loadedTextures.find(textureIndex) != loadedTextures.end())
+            return loadedTextures[textureIndex];
 
         auto gltfTexture = model.textures[textureIndex];
         auto imageIndex = gltfTexture.source;
         auto image = model.images[imageIndex];
 
-        return 0;
+        if (image.bufferView >= 0) {
+            // image embedded in model file
+            const auto& bufferView = model.bufferViews[image.bufferView];
+            const auto& buffer = model.buffers[bufferView.buffer];
+
+            if (image.mimeType == "image/ktx2" || image.mimeType == "image/ktx") {
+                const uint8_t* ktx2Data = buffer.data.data() + bufferView.byteOffset;
+                size_t ktx2Size = bufferView.byteLength;
+
+                id = storeTexture(createTexture(loadTextureDataKtx(ktx2Data, ktx2Size)));
+            } else {
+                TextureData textureData {
+                    .pixels = image.image,
+                    .imageSize = image.width * image.height * image.component * sizeof(uint8_t),
+                    .format = format,
+                    .extent = {static_cast<uint32_t>(image.width), static_cast<uint32_t>(image.height), 1},
+                };
+
+                id = storeTexture(createTexture(textureData));
+            }
+        } else {
+            // image stored in separate file
+            std::string imagePath = getFileDirectory(path) + "/" + image.uri;
+
+            id = loadTexture(imagePath, format);
+        }
+
+        loadedTextures[textureIndex] = id;
+
+        return id;
     };
 
-    for (const auto& gltfMat : model.materials) {
-        PBRMaterial mat {
-            .baseColor = {
-                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[0]),
-                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[1]),
-                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[2]),
-                static_cast<float>(gltfMat.pbrMetallicRoughness.baseColorFactor[3]),
-            },
-            .metallic = static_cast<float>(gltfMat.pbrMetallicRoughness.metallicFactor),
-            .roughness = static_cast<float>(gltfMat.pbrMetallicRoughness.roughnessFactor),
-            // TODO: assign textures
+    for (size_t index = 0; index < model.materials.size(); ++index) {
+        auto &gltfMaterial = model.materials[index];
+
+        PBRMaterial material {
+            .metallic = static_cast<float>(gltfMaterial.pbrMetallicRoughness.metallicFactor),
+            .roughness = static_cast<float>(gltfMaterial.pbrMetallicRoughness.roughnessFactor),
+            .baseColorTex = loadMaterialTexture(gltfMaterial.pbrMetallicRoughness.baseColorTexture.index),
+            .metallicRoughnessTex = loadMaterialTexture(gltfMaterial.pbrMetallicRoughness.metallicRoughnessTexture.index, VK_FORMAT_R8G8B8A8_UNORM),
+            .normalTex = loadMaterialTexture(gltfMaterial.normalTexture.index, VK_FORMAT_R8G8B8A8_UNORM),
+            .occlusionTex = loadMaterialTexture(gltfMaterial.occlusionTexture.index, VK_FORMAT_R8G8B8A8_UNORM),
         };
-        // TODO: store material
+
+        if (gltfMaterial.pbrMetallicRoughness.baseColorFactor.size() >= 4) {
+            for (size_t i = 0; i < gltfMaterial.pbrMetallicRoughness.baseColorFactor.size(); ++i)
+                material.baseColor[i] = static_cast<float>(gltfMaterial.pbrMetallicRoughness.baseColorFactor[i]);
+        }
+
+        loadedMaterials[index] = storePBRMaterial(material);
     }
 
     for (const auto& mesh : model.meshes) {
@@ -615,7 +659,16 @@ Model Engine::loadGLTF(const std::string &path)
             }
         }
 
+
         Mesh _mesh(vertices, indices);
+
+        int material = mesh.primitives[0].material;
+
+        if (material >= 0) {
+            _mesh.material = loadedMaterials[material];
+            _mesh.isPBR = true;
+        }
+
         meshes.push_back(_mesh);
     }
 

@@ -71,6 +71,7 @@ struct Mesh {
 	std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     uint32_t material = 0;
+    bool isPBR = false;
     uint32_t visibleInstances = 0;
     Buffer vertexBuffer;
     vke::Volume volume;
