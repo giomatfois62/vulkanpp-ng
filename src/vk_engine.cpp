@@ -349,7 +349,7 @@ uint32_t Engine::loadTexture(const std::string &path, VkFormat format)
     return storeTexture(createTexture(data));
 }
 
-uint32_t Engine::storeTexture(Texture texture)
+uint32_t Engine::storeTexture(const Texture &texture)
 {
     uint32_t textureID = assets.textures.insert(texture);
 
@@ -374,12 +374,12 @@ uint32_t Engine::storeTexture(Texture texture)
     return textureID;
 }
 
-uint32_t Engine::storeMaterial(Material material)
+uint32_t Engine::storeMaterial(const Material &material)
 {
     return assets.materials.insert(material);
 }
 
-uint32_t Engine::storePBRMaterial(PBRMaterial material)
+uint32_t Engine::storePBRMaterial(const PBRMaterial &material)
 {
     return assets.pbrMaterials.insert(material);
 }
@@ -500,14 +500,27 @@ Model Engine::loadOBJ(const std::string &path)
     return Model(meshes);
 }
 
+bool loadImageData(tinygltf::Image* image, const int imageIndex, std::string* error, std::string* warning,
+    int req_width, int req_height, const unsigned char* bytes, int size, void* userData)
+{
+    // KTX files will be handled by our own code
+    std::string ext = getFileExtension(image->uri);
+
+    if (ext == "ktx" || ext == "ktx2")
+        return true;
+
+    return tinygltf::LoadImageData(image, imageIndex, error, warning, req_width, req_height, bytes, size, userData);
+}
+
 Model Engine::loadGLTF(const std::string &path)
 {
-    // TODO: load materials and textures
     tinygltf::Model model;
     tinygltf::TinyGLTF loader;
     std::string err;
     std::string warn;
     bool res;
+
+    loader.SetImageLoader(loadImageData, nullptr);
 
     if (getFileExtension(path) == "glb") {
         res = loader.LoadBinaryFromFile(&model, &err, &warn, path);
@@ -521,7 +534,8 @@ Model Engine::loadGLTF(const std::string &path)
 
     if (!err.empty() || !res) {
         std::cerr << "GLTF Error: " << err << std::endl;
-        throw std::runtime_error("Failed to load glTF model from " + path);
+        if (!res)
+            throw std::runtime_error("Failed to load glTF model from " + path);
     }
 
     std::vector<Mesh> meshes;
@@ -628,7 +642,8 @@ Model Engine::loadGLTF(const std::string &path)
                     v.normal = { normBuffer[i*3], normBuffer[i*3+1], normBuffer[i*3+2] };
 
                 if (uvBuffer)
-                    v.uv = { uvBuffer[i*2], 1.0f - uvBuffer[i*2+1] };
+                    v.uv = { uvBuffer[i*2], uvBuffer[i*2+1] };
+                    //v.uv = { uvBuffer[i*2], 1.0f - uvBuffer[i*2+1] };
 
                 vertices.push_back(v);
             }

@@ -75,15 +75,17 @@ struct Mesh {
     uint32_t visibleInstances = 0;
     Buffer vertexBuffer;
     vke::Volume volume;
+    VmaAllocator allocator = VK_NULL_HANDLE;
 
     std::vector<vke::InstanceDrawData> drawData;
-    vke::ShaderBuffers drawDataBuffers;
+    vke::SSBOs drawDataBuffers;
 
     void computeVolume();
     void computeTangents();
+    void draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<vke::InstanceDrawData> &instances);
     void draw(VkCommandBuffer cmd, uint32_t count);
     void upload(VmaAllocator allocator);
-    void cleanup(VmaAllocator allocator);
+    void cleanup();
     void updateDrawData(uint32_t frameIndex);
 };
 
@@ -96,7 +98,7 @@ struct Model {
 
     void draw(VkCommandBuffer cmd, uint32_t count);
     void upload(VmaAllocator allocator);
-    void cleanup(VmaAllocator allocator);
+    void cleanup();
     void computeVolume();
 };
 

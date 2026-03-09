@@ -68,9 +68,9 @@ public:
 
     Texture createTexture(const TextureData &data);
     uint32_t loadTexture(const std::string &path, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);
-    uint32_t storeTexture(Texture texture);
-    uint32_t storeMaterial(Material material);
-    uint32_t storePBRMaterial(PBRMaterial material);
+    uint32_t storeTexture(const Texture &texture);
+    uint32_t storeMaterial(const Material &material);
+    uint32_t storePBRMaterial(const PBRMaterial &material);
 
     Model loadModel(const std::string &path);
     Model loadOBJ(const std::string &path);

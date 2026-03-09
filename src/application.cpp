@@ -56,12 +56,12 @@ void Application::onResize(int, int)
 void Application::draw(VkCommandBuffer cmd)
 {
     // Update shader data
-    // TODO: use draw extent
-    sceneData.projection = camera.projection((float)windowSize.width / (float)windowSize.height, 0.1f, 500.0f);
+    sceneData.projection = camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 1000.0f);
     sceneData.view = camera.view();
     sceneData.viewPos = { camera.position, 1.0f };
     sceneDataBuffers.update(currentFrameIndex, &sceneData, sizeof(sceneData));
     materialBuffers.update(currentFrameIndex, assets.materials.data(), assets.materials.dataSize());
+    pbrMaterialBuffers.update(currentFrameIndex, assets.pbrMaterials.data(), assets.pbrMaterials.dataSize());
 
     // begin dynamic rendering
     /*
@@ -115,7 +115,8 @@ void Application::draw(VkCommandBuffer cmd)
     // bind once for all draw commands
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &bindlessDescriptorSet, 0, nullptr);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pbrPipeline);
+    //vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
     // set pipeline dynamic states
     VkViewport viewport{
@@ -136,7 +137,8 @@ void Application::draw(VkCommandBuffer cmd)
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &sceneDataBuffers.buffers[currentFrameIndex].address);
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 2, sizeof(VkDeviceAddress), &materialBuffers.buffers[currentFrameIndex].address);
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 2, sizeof(VkDeviceAddress), &pbrMaterialBuffers.buffers[currentFrameIndex].address);
+    //vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 2, sizeof(VkDeviceAddress), &materialBuffers.buffers[currentFrameIndex].address);
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 3, sizeof(VkDeviceAddress), &lightDataBuffers.buffers[currentFrameIndex].address);
 
     //drawTestScene(cmd);
@@ -451,7 +453,45 @@ void Application::createPipelines()
     vkDestroyShaderModule(vulkan.device, meshVertexShader, nullptr);
     vkDestroyShaderModule(vulkan.device, coloredFragmentShader, nullptr);
 
+    createPBRPipeline();
     createOffscreenPipeline();
+}
+
+void Application::createPBRPipeline()
+{
+    VkShaderModule vertexShader = createShaderModule("res/shaders/mesh_ubo_world_lights.vert.spv", vulkan.device);
+    VkShaderModule fragmentShader = createShaderModule("res/shaders/mesh_ubo_world_lights_pbr.frag.spv", vulkan.device);
+
+    if (vertexShader == VK_NULL_HANDLE)
+        cerr << "Error when building the mesh vertex shader module" << endl;
+
+    if (fragmentShader == VK_NULL_HANDLE)
+        cerr << "Error when building the mesh fragment shader module" << endl;
+
+    std::vector<VkDynamicState> dynamicStates{
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+
+    pbrPipeline = PipelineBuilder()
+        .setLayout(pipelineLayout)
+        .addShaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertexShader)
+        .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentShader)
+        .setVertexDescription(Vertex::description())
+        .setInputTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        //.setPolygonMode(VK_POLYGON_MODE_LINE)
+        .setPolygonMode(VK_POLYGON_MODE_FILL)
+        .setDynamicStates(dynamicStates)
+        .enableDepthTesting(VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setColorAttachmentFormat(swapchain.imageFormat)
+        .setDepthAttachmentFormat(depthImage.info.format)
+        .setMSAASamples(MSAASamples)
+        .disableBlending()
+        .build(vulkan.device, {});
+
+    // cleanup shader modules
+    vkDestroyShaderModule(vulkan.device, vertexShader, nullptr);
+    vkDestroyShaderModule(vulkan.device, fragmentShader, nullptr);
 }
 
 void Application::createOffscreenPipeline()
@@ -513,6 +553,7 @@ void Application::createOffscreenPipeline()
 void Application::cleanupPipelines()
 {
     vkDestroyPipeline(vulkan.device, lightsPipeline, nullptr);
+    vkDestroyPipeline(vulkan.device, pbrPipeline, nullptr);
     vkDestroyPipeline(vulkan.device, pipeline, nullptr);
     vkDestroyPipelineLayout(vulkan.device, pipelineLayout, nullptr);
 
@@ -527,20 +568,22 @@ void Application::loadAssets()
     loadLights();
 
     backupMaterials = assets.materials.items;
-    sceneDataBuffers.createUniform(framesInFlight.size(), sizeof(sceneData), vulkan.device, vulkan.allocator);
-    materialBuffers.createUniform(framesInFlight.size(), assets.materials.dataSize(), vulkan.device, vulkan.allocator);
+    sceneDataBuffers.create(framesInFlight.size(), sizeof(sceneData), vulkan.device, vulkan.allocator);
+    materialBuffers.create(framesInFlight.size(), assets.materials.dataSize(), vulkan.device, vulkan.allocator);
+    pbrMaterialBuffers.create(framesInFlight.size(), assets.pbrMaterials.dataSize(), vulkan.device, vulkan.allocator);
 }
 
 void Application::cleanupAssets()
 {
-    model.cleanup(vulkan.allocator);
-    sphere.cleanup(vulkan.allocator);
-    planet.cleanup(vulkan.allocator);
-    rock.cleanup(vulkan.allocator);
+    model.cleanup();
+    sphere.cleanup();
+    planet.cleanup();
+    rock.cleanup();
 
-    sceneDataBuffers.cleanup(vulkan.allocator);
-    materialBuffers.cleanup(vulkan.allocator);
-    lightDataBuffers.cleanup(vulkan.allocator);
+    sceneDataBuffers.cleanup();
+    pbrMaterialBuffers.cleanup();
+    materialBuffers.cleanup();
+    lightDataBuffers.cleanup();
 }
 
 void Application::loadTestScene()
@@ -554,12 +597,17 @@ void Application::loadTestScene()
     //objPosition.y = -3.0f;
     //objScale = 0.25;
 
+    //model = loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/FlightHelmet/glTF/FlightHelmet.gltf");
     //model = loadGLTF("res/objects/gltf/voyager.gltf");
+    //objScale = 0.1f;
+    //model = loadGLTF("res/objects/gltf/voyager.gltf");
+    model = loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/sponza/sponza.gltf");
+    objScale = 0.1;
     //model = loadGLTF("res/objects/gltf/deer.gltf");
     //model = loadGLTF("res/objects/gltf/torusknot.gltf");
 
-    model = Model({ createCube() });
-    objPosition.z = 10.0f;
+    //model = Model({ createCube() });
+    //objPosition.z = 10.0f;
     //model = { .meshes = { createSphere(0.5, 36, 18) } };
     //model = { .meshes = { createCylinder(0.5, 1, 32) } };
     //model = { .meshes = { createTorus(1.0f, 0.5f, 36, 18) } };
@@ -576,7 +624,7 @@ void Application::loadTestScene()
         }
 
         size_t drawDataSize = mesh.drawData.size() * sizeof(InstanceDrawData);
-        mesh.drawDataBuffers.createStorage(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
+        mesh.drawDataBuffers.create(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
     }
 
     assets.materials.items[0].normalTex = loadTexture("res/textures/brickwall_normal.jpg", VK_FORMAT_R8G8B8A8_UNORM);
@@ -585,12 +633,10 @@ void Application::loadTestScene()
 
 void Application::loadPlanetScene()
 {
-    //auto model2 = loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/FlightHelmet/glTF/FlightHelmet.gltf");
-    auto model2 = loadGLTF("res/objects/gltf/voyager.gltf");
-
-
-    planet = loadOBJ("res/objects/planet/planet.obj");
-    rock = loadOBJ("res/objects/rock/rock.obj");
+    //planet = loadOBJ("res/objects/planet/planet.obj");
+    //rock = loadOBJ("res/objects/rock/rock.obj");
+    planet = loadModel("res/objects/gltf/lavaplanet.gltf");
+    rock = loadModel("res/objects/gltf/rock01.gltf");
 
     float radius = 150.0;
     float offset = 25.0f;
@@ -598,7 +644,7 @@ void Application::loadPlanetScene()
     for (auto &mesh : planet.meshes) {
         glm::mat4 t = glm::mat4(1.0f);
         t = glm::translate(t, glm::vec3(0.0f, -3.0f, 0.0f));
-        t = glm::scale(t, glm::vec3(4.0f, 4.0f, 4.0f));
+        t = glm::scale(t, glm::vec3(32.0f, 32.0f, 32.0f));
 
         mesh.drawData.push_back({
             .material = mesh.material,
@@ -606,7 +652,7 @@ void Application::loadPlanetScene()
         });
 
         size_t drawDataSize = mesh.drawData.size() * sizeof(InstanceDrawData);
-        mesh.drawDataBuffers.createStorage(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
+        mesh.drawDataBuffers.create(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
     }
 
     planet.upload(vulkan.allocator);
@@ -640,7 +686,7 @@ void Application::loadPlanetScene()
         }
 
         size_t drawDataSize = mesh.drawData.size() * sizeof(InstanceDrawData);
-        mesh.drawDataBuffers.createStorage(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
+        mesh.drawDataBuffers.create(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
     }
 
     rock.upload(vulkan.allocator);
@@ -701,7 +747,7 @@ void Application::loadLights()
     }
 
     size_t lightSize = sizeof(uint32_t) * 4 + sizeof(Light) * lights.size(); // (lights count + padding) + lights array
-    lightDataBuffers.createUniform(framesInFlight.size(), lightSize, vulkan.device, vulkan.allocator);
+    lightDataBuffers.create(framesInFlight.size(), lightSize, vulkan.device, vulkan.allocator);
 
     sphere = Model({ createSphere(0.2, 36, 18) });
     sphere.upload(vulkan.allocator);
@@ -721,7 +767,7 @@ void Application::loadLights()
         }
 
         size_t drawDataSize = mesh.drawData.size() * sizeof(InstanceDrawData);
-        mesh.drawDataBuffers.createStorage(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
+        mesh.drawDataBuffers.create(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
     }
 }
 
@@ -758,7 +804,7 @@ void Application::updatePlanetScene(float dt)
         mesh.updateDrawData(currentFrameIndex);
     }
 
-    Frustum frustum(camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 500.0f) * camera.view());
+    Frustum frustum(camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 1000.0f) * camera.view());
 
     for (auto &mesh : rock.meshes) {
         #pragma omp parallel for
@@ -813,9 +859,8 @@ void Application::updateLights(float dt)
     }
 
     // Update light clusters
-    // TODO: use draw extent
     timeToBuildClusters = measureExecution<std::chrono::microseconds>([&]{
-        auto proj = camera.projection((float)windowSize.width / (float)windowSize.height, 0.1f, 100.0f);
+        auto proj = camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 100.0f);
         lightClusters = buildLightClusters(0.1f, 100.0f, { 16, 9, 24 }, { drawExtent().width, drawExtent().height }, glm::inverse(proj));
     });
 

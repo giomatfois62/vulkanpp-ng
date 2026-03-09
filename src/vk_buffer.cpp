@@ -72,34 +72,34 @@ VkDeviceAddress vke::getBufferAddress(VkBuffer buffer, VkDevice device)
     return vkGetBufferDeviceAddress(device, &addressInfo);
 }
 
-void ShaderBuffers::createUniform(uint32_t count, size_t size, VkDevice device, VmaAllocator allocator)
-{
-    cleanup(allocator);
-
-    for (uint32_t i = 0; i < count; ++i) {
-        Buffer buffer = createUBO(size, allocator);
-        buffer.address = getBufferAddress(buffer.handle, device);
-        buffers.push_back(buffer);
-    }
-}
-
-void ShaderBuffers::createStorage(uint32_t count, size_t size, VkDevice device, VmaAllocator allocator)
-{
-    cleanup(allocator);
-
-    for (uint32_t i = 0; i < count; ++i) {
-        Buffer buffer = createSSBO(size, allocator);
-        buffer.address = getBufferAddress(buffer.handle, device);
-        buffers.push_back(buffer);
-    }
-}
-
-void ShaderBuffers::update(uint32_t index, void *data, size_t size, size_t offset)
+void ShaderBuffers::update(uint32_t index, const void *data, size_t size, size_t offset)
 {
     memcpy((char*)buffers[index].allocInfo.pMappedData+offset, data, size);
 }
 
-void ShaderBuffers::cleanup(VmaAllocator allocator)
+void ShaderBuffers::create(uint32_t count, size_t size, VkDevice device, VmaAllocator allocator)
+{
+    cleanup();
+
+    this->device = device;
+    this->allocator = allocator;
+    this->size = size;
+
+    for (uint32_t i = 0; i < count; ++i) {
+        Buffer buffer = type == BufferType::Uniform ? createUBO(size, allocator) : createSSBO(size, allocator);
+        buffer.address = getBufferAddress(buffer.handle, device);
+        buffers.push_back(buffer);
+    }
+}
+
+void ShaderBuffers::recreate(uint32_t count, size_t size)
+{
+    cleanup();
+
+    create(count, size, device, allocator);
+}
+
+void ShaderBuffers::cleanup()
 {
     for (auto &buffer : buffers)
         vmaDestroyBuffer(allocator, buffer.handle, buffer.allocation);

@@ -24,6 +24,7 @@ protected:
     void processEvent(const SDL_Event &event) override;
 
 	void createPipelines();
+    void createPBRPipeline();
     void createOffscreenPipeline();
 	void cleanupPipelines();
     void loadAssets();
@@ -41,6 +42,7 @@ protected:
 
     VkPipelineLayout pipelineLayout;
     VkPipeline pipeline;
+    VkPipeline pbrPipeline;
     VkPipeline lightsPipeline;
     VkPipelineLayout offscreenPipelineLayout;
     VkPipeline offscreenPipeline;
@@ -52,7 +54,7 @@ protected:
     // planet scene
     vke::Model planet;
     vke::Model rock;
-    uint32_t rocksCount = 10000;
+    uint32_t rocksCount = 20000;
     size_t culledInstances = 0;
     double timeToCullInstances;
     bool doCulling = true;
@@ -69,13 +71,14 @@ protected:
     double timeToBuildClusters;
     double timeToAssignLights;
 
-    vke::ShaderBuffers sceneDataBuffers;
-    vke::ShaderBuffers lightDataBuffers;
-    vke::ShaderBuffers materialBuffers;
+    vke::UBOs sceneDataBuffers;
+    vke::SSBOs lightDataBuffers;
+    vke::UBOs materialBuffers;
+    vke::UBOs pbrMaterialBuffers;
 
     vke::Camera camera;
     float fov = 45.f;
-    uint32_t instances = 64;
+    uint32_t instances = 1;
     uint32_t lightsCount = 1;
     float objScale = 1.0f;
     glm::vec3 objPosition = {};

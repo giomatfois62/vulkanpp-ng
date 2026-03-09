@@ -98,6 +98,18 @@ void Mesh::computeTangents()
     }
 }
 
+void Mesh::draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<InstanceDrawData> &instances)
+{
+    size_t drawDataSize = instances.size() * sizeof(InstanceDrawData);
+
+    if (drawDataBuffers.size < drawDataSize)
+        drawDataBuffers.recreate(drawDataBuffers.buffers.size(), drawData.size());
+
+    drawDataBuffers.update(frameIndex, instances.data(), drawDataSize);
+
+    draw(cmd, instances.size());
+}
+
 void Mesh::draw(VkCommandBuffer cmd, uint32_t count)
 {
     VkDeviceSize offset = 0;
@@ -114,6 +126,8 @@ void Mesh::draw(VkCommandBuffer cmd, uint32_t count)
 
 void Mesh::upload(VmaAllocator allocator)
 {
+    this->allocator = allocator;
+
     VkDeviceSize vBufSize = vertices.size() * sizeof(Vertex);
     VkDeviceSize iBufSize = indices.size() * sizeof(uint32_t);
 
@@ -140,11 +154,11 @@ void Mesh::upload(VmaAllocator allocator)
     vmaUnmapMemory(allocator, vertexBuffer.allocation);
 }
 
-void vke::Mesh::cleanup(VmaAllocator allocator)
+void vke::Mesh::cleanup()
 {
     vmaDestroyBuffer(allocator, vertexBuffer.handle, vertexBuffer.allocation);
 
-    drawDataBuffers.cleanup(allocator);
+    drawDataBuffers.cleanup();
 }
 
 void Mesh::updateDrawData(uint32_t frameIndex)
@@ -176,10 +190,10 @@ void vke::Model::upload(VmaAllocator allocator)
         mesh.upload(allocator);
 }
 
-void Model::cleanup(VmaAllocator allocator)
+void Model::cleanup()
 {
     for (auto &mesh : meshes)
-        mesh.cleanup(allocator);
+        mesh.cleanup();
 }
 
 void Model::computeVolume()
