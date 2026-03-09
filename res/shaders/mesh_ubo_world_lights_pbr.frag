@@ -124,7 +124,7 @@ void main()
 
         if (light.type == 1) {
             // directional light
-            L = normalize(-light.position.xyz);
+            L = normalize(-light.direction.xyz);
             radiance = light.diffuse.rgb;
         } else {
             // point/spot light
@@ -177,7 +177,7 @@ void main()
 
     // ambient lighting (note that the next IBL tutorial will replace
     // this ambient lighting with environment lighting).
-    vec3 ambient = vec3(0.03) * albedo * ao;
+    vec3 ambient = vec3(0.00001) * albedo * ao;
 
     vec3 color = ambient + Lo;
 
