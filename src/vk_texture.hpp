@@ -22,7 +22,10 @@ struct TextureData {
 struct Texture {
     Image image;
     VkSampler sampler;
+    VkDevice device;
+    VmaAllocator allocator;
 
+    void create(const TextureData &data, VkCommandPool pool, VkQueue queue, VkDevice device, VmaAllocator allocator);
     void cleanup(VkDevice device, VmaAllocator allocator);
 };
 

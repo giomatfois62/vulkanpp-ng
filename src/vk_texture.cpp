@@ -1,5 +1,7 @@
 #include "vk_texture.hpp"
+#include "vk_core.hpp"
 #include "vk_utils.hpp"
+#include "vk_buffer.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -11,6 +13,101 @@
 #include <cmath>
 
 using namespace vke;
+
+void Texture::create(const TextureData &data, VkCommandPool pool, VkQueue queue, VkDevice device, VmaAllocator allocator)
+{
+    this->device = device;
+    this->allocator = allocator;
+
+    Buffer uploadbuffer = createStagingBuffer(data.imageSize, allocator);
+    memcpy(uploadbuffer.allocInfo.pMappedData, data.pixels.data(), data.imageSize);
+
+    image = createImage(
+        VkImageCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = data.format,
+            .extent = data.extent,
+            .mipLevels = data.mipLevels,
+            .arrayLayers = data.arrayLayers,
+            .samples = VK_SAMPLE_COUNT_1_BIT, // TODO: support multisampling
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+        },
+        VmaAllocationCreateInfo{ .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE },
+        allocator
+    );
+
+    VkImageSubresourceRange subresourceRange{
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .levelCount = data.mipLevels,
+        .layerCount = data.arrayLayers
+    };
+
+    VkImageViewCreateInfo viewInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = image.handle,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D, // TODO: support cubemaps and arrays
+        .format = data.format,
+        .subresourceRange = subresourceRange
+    };
+
+    VK_CHECK(vkCreateImageView(device, &viewInfo, nullptr, &image.view));
+
+    VkCommandBuffer cmd = createCommandBuffer(true, pool, device);
+
+    changeImageLayout(cmd, image.handle,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        subresourceRange
+    );
+
+    if (!data.hasMipmaps) {
+        VkBufferImageCopy copyRegion{
+            .imageSubresource = VkImageSubresourceLayers{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .layerCount = data.arrayLayers
+            },
+            .imageExtent = data.extent
+        };
+
+        vkCmdCopyBufferToImage(cmd, uploadbuffer.handle, image.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+        // TODO: support layers mipmap generation
+        generateMipmaps(cmd, image.handle, {data.extent.width, data.extent.height}, data.mipLevels);
+    } else {
+        std::vector<VkBufferImageCopy> copyRegions;
+
+        for (uint32_t layer = 0; layer < data.arrayLayers; ++layer) {
+            for (uint32_t mip = 0; mip < data.mipLevels; ++mip) {
+                size_t mipOffset = data.offsets[layer][mip];
+
+                copyRegions.push_back(
+                    VkBufferImageCopy{
+                        .bufferOffset = mipOffset,
+                        .imageSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = mip, .baseArrayLayer = layer, .layerCount = 1 },
+                        .imageExtent{ .width = data.extent.width >> mip, .height = data.extent.height >> mip, .depth = 1 },
+                    }
+                );
+            }
+        }
+
+        vkCmdCopyBufferToImage(cmd, uploadbuffer.handle, image.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            static_cast<uint32_t>(copyRegions.size()), copyRegions.data());
+
+        changeImageLayout(cmd, image.handle,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            subresourceRange
+        );
+    }
+
+    submitCommandBuffer(cmd, queue, pool, device, true);
+
+    vmaDestroyBuffer(allocator, uploadbuffer.handle, uploadbuffer.allocation);
+
+    sampler = createDefaultSampler(device);
+}
 
 void Texture::cleanup(VkDevice device, VmaAllocator allocator)
 {
