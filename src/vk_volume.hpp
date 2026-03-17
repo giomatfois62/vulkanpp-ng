@@ -198,6 +198,7 @@ struct Volume {
     bool intersect(const Ray &ray) const;
     bool intersect(const Sphere &sphere) const;
     std::vector<Volume> subdivide();
+    void updateDimensions(const glm::vec3 &pos);
 
     glm::vec3 min;
     glm::vec3 max;

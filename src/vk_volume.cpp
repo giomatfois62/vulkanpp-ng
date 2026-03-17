@@ -152,6 +152,17 @@ bool vke::Volume::intersect(const Sphere &sphere) const
     return dist <= sphere.radius * sphere.radius;
 }
 
+void vke::Volume::updateDimensions(const glm::vec3 &pos)
+{
+    min[0] = fminf(min[0], pos[0]);
+    min[1] = fminf(min[1], pos[1]);
+    min[2] = fminf(min[2], pos[2]);
+
+    max[0] = fmaxf(max[0], pos[0]);
+    max[1] = fmaxf(max[1], pos[1]);
+    max[2] = fmaxf(max[2], pos[2]);
+}
+
 vke::Volume vke::Volume::minimumBoundingBox(const Volume &other) const
 {
     glm::vec3 _min = {
