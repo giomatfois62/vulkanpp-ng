@@ -74,7 +74,10 @@ VkDeviceAddress vke::getBufferAddress(VkBuffer buffer, VkDevice device)
 
 void ShaderBuffers::update(uint32_t index, const void *data, size_t size, size_t offset)
 {
-    memcpy((char*)buffers[index].allocInfo.pMappedData+offset, data, size);
+    if (offset + size > this->size)
+        recreate(buffers.size(), offset + size);
+
+    memcpy((char*)buffers[index].allocInfo.pMappedData + offset, data, size);
 }
 
 void ShaderBuffers::create(uint32_t count, size_t size, VkDevice device, VmaAllocator allocator)
