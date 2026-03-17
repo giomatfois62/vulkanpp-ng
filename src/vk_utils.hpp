@@ -49,6 +49,8 @@ std::string getFileExtension(const std::string &filename);
 
 std::string getFileDirectory(const std::string &filename);
 
+std::string getFileName(const std::string &filename);
+
 std::string errorString(VkResult errorCode);
 
 } // end namespace vke

@@ -8,6 +8,7 @@
 #include <glm/vec3.hpp>
 #include <glm/mat4x4.hpp>
 
+#include <string>
 #include <vector>
 
 namespace vke {
@@ -100,6 +101,7 @@ struct Model {
     size_t vertexCount;
     size_t indexCount;
     vke::Volume volume;
+    std::string name;
     std::vector<vke::SSBOs> instanceBuffers;
     Buffer vertexBuffer;
     VkDevice device = VK_NULL_HANDLE;

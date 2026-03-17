@@ -1,6 +1,7 @@
 #include "vk_mesh.hpp"
 
 #include <cstring>
+#include <iostream>
 
 using namespace vke;
 
@@ -126,6 +127,10 @@ void Model::upload(std::vector<Vertex> &vertices, const std::vector<uint32_t> &i
 
     for (auto &buffer : instanceBuffers)
         buffer.create(framesInFlight, sizeof(InstanceData), device, allocator);
+
+    std::cout << "Uploaded model \"" << name << "\" with " << vertexCount << " vertices, " <<
+        indexCount / 3 << " triangles, " << nodes.size() << " nodes, " <<
+        meshes.size() << " meshes" << std::endl;
 }
 
 void Model::cleanup()

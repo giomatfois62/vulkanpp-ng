@@ -187,20 +187,20 @@ uint32_t Scene::storePBRMaterial(const PBRMaterial &material)
     return pbrMaterials.insert(material);
 }
 
-Model Scene::loadModel(const std::string &path)
+Model Scene::loadModel(const std::string &path, const std::string &name)
 {
     std::string extension = getFileExtension(path);
 
     if (extension == "obj" || extension == "OBJ") {
-        return loadOBJ(path);
+        return loadOBJ(path, name);
     } else if (extension == "gltf" || extension == "GLTF" || extension == "glb" || extension == "GLB") {
-        return loadGLTF(path);
+        return loadGLTF(path, name);
     } else {
-        return loadGLTF(path); // fallback on gltf format
+        return loadGLTF(path, name); // fallback on gltf format
     }
 }
 
-Model Scene::loadOBJ(const std::string &path)
+Model Scene::loadOBJ(const std::string &path, const std::string &name)
 {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
@@ -246,7 +246,7 @@ Model Scene::loadOBJ(const std::string &path)
         loadedMaterials.push_back(storeMaterial(material));
     }
 
-    Model model;
+    Model model{ .name = (name.empty()) ? getFileName(path) : name };
     std::unordered_map<Vertex, uint32_t> uniqueVertices;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -319,7 +319,7 @@ Model Scene::loadOBJ(const std::string &path)
 }
 
 bool loadImageData(tinygltf::Image* image, const int imageIndex, std::string* error, std::string* warning,
-                   int req_width, int req_height, const unsigned char* bytes, int size, void* userData)
+    int req_width, int req_height, const unsigned char* bytes, int size, void* userData)
 {
     // KTX files will be handled by our own code
     std::string ext = getFileExtension(image->uri);
@@ -331,7 +331,7 @@ bool loadImageData(tinygltf::Image* image, const int imageIndex, std::string* er
 }
 
 void loadGLTFMesh(int meshIndex, Model &model, tinygltf::Model &gltfModel, std::map<int,std::vector<int>> &loadedMeshes,
-                  std::map<int,uint32_t> &loadedMaterials, std::vector<vke::Vertex> &vertices, std::vector<uint32_t> &indices)
+    std::map<int,uint32_t> &loadedMaterials, std::vector<vke::Vertex> &vertices, std::vector<uint32_t> &indices)
 {
     auto &mesh = gltfModel.meshes[meshIndex];
     std::vector<int> generatedMeshIndices;
@@ -426,7 +426,7 @@ void loadGLTFMesh(int meshIndex, Model &model, tinygltf::Model &gltfModel, std::
 }
 
 void loadGLTFNode(int parentIndex, int nodeId, const tinygltf::Node &node, Model &model,
-                  tinygltf::Model &gltfModel, std::map<int,std::vector<int>> &loadedMeshes)
+    tinygltf::Model &gltfModel, std::map<int,std::vector<int>> &loadedMeshes)
 {
     // new node index
     int nodeIndex = model.nodes.size();
@@ -480,7 +480,7 @@ void loadGLTFNode(int parentIndex, int nodeId, const tinygltf::Node &node, Model
     }
 }
 
-Model Scene::loadGLTF(const std::string &path)
+Model Scene::loadGLTF(const std::string &path, const std::string &name)
 {
     tinygltf::Model gltfModel;
     tinygltf::TinyGLTF loader;
@@ -574,8 +574,8 @@ Model Scene::loadGLTF(const std::string &path)
         loadedMaterials[index] = storePBRMaterial(material);
     }
 
-    // then load meshes and nodes
-    Model model;
+    // then load meshes and nodes 
+    Model model{ .name = (name.empty()) ? getFileName(path) : name };
 
     // each mesh is split into multiple meshes, one per primitive. keep track of loaded meshes with a separate map
     std::vector<Vertex> vertices;
@@ -596,9 +596,9 @@ Model Scene::loadGLTF(const std::string &path)
     return model;
 }
 
-Model Scene::loadModel(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices)
+Model Scene::loadModel(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices, const std::string &name)
 {
-    Model model;
+    Model model{ .name = name };
 
     model.meshes.push_back({
         .indexCount = static_cast<uint32_t>(indices.size()),

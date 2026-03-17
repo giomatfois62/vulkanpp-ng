@@ -67,3 +67,10 @@ std::string vke::getFileDirectory(const std::string &filename)
 
     return (sepPos == std::string::npos) ? "" : filename.substr(0, sepPos);
 }
+
+std::string vke::getFileName(const std::string &filename)
+{
+    auto sepPos = filename.find_last_of('/');
+
+    return (sepPos == std::string::npos) ? filename : filename.substr(sepPos + 1);
+}

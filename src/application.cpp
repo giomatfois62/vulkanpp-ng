@@ -623,6 +623,8 @@ void Application::loadPlanetScene()
     //planet = loadOBJ("res/objects/planet/planet.obj");
     //rock = loadOBJ("res/objects/rock/rock.obj");
     planet = scene.loadModel("res/objects/gltf/lavaplanet.gltf");
+    //GeometryData sphereData = createSphere(3, 36, 18);
+    //planet = scene.loadModel(sphereData.vertices, sphereData.indices, "planet");
     rock = scene.loadModel("res/objects/gltf/rock01.gltf");
 
     float radius = 150.0;
@@ -717,7 +719,7 @@ void Application::loadLights()
     lightDataBuffers.create(framesInFlight.size(), lightSize, vulkan.device, vulkan.allocator);
 
     GeometryData sphereData = createSphere(0.2, 36, 18);
-    sphere = scene.loadModel(sphereData.vertices, sphereData.indices);
+    sphere = scene.loadModel(sphereData.vertices, sphereData.indices, "sphere");
 
     for (uint32_t i = 0; i < lights.size(); ++i) {
         if (lights[i].type == LightType::Point) {
