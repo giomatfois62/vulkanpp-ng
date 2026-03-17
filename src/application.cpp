@@ -141,8 +141,8 @@ void Application::draw(VkCommandBuffer cmd)
     //vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 2, sizeof(VkDeviceAddress), &materialBuffers.buffers[currentFrameIndex].address);
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 3, sizeof(VkDeviceAddress), &lightDataBuffers.buffers[currentFrameIndex].address);
 
-    //drawTestScene(cmd);
-    drawPlanetScene(cmd);
+    //drawTestScene(cmd, pipelineLayout);
+    drawPlanetScene(cmd, pipelineLayout);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightsPipeline);
     vkCmdSetViewport(cmd, 0, 1, &viewport);
@@ -152,12 +152,7 @@ void Application::draw(VkCommandBuffer cmd)
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 2, sizeof(VkDeviceAddress), &materialBuffers.buffers[currentFrameIndex].address);
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 3, sizeof(VkDeviceAddress), &lightDataBuffers.buffers[currentFrameIndex].address);
 
-    for (auto &mesh : sphere.meshes) {
-        // push mesh data constants
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 1, sizeof(VkDeviceAddress), &mesh.drawDataBuffers.buffers[currentFrameIndex].address);
-
-        mesh.draw(cmd, mesh.drawData.size());
-    }
+    sphere.draw(cmd, lightInstances, currentFrameIndex, pipelineLayout);
 
     vkCmdEndRendering(cmd);
 
@@ -613,18 +608,8 @@ void Application::loadTestScene()
     //model = { .meshes = { createTorus(1.0f, 0.5f, 36, 18) } };
     //model = { .meshes = { createCone(1.0f, 2.5f, 8, 1) } };
 
-    model.upload(vulkan.allocator);
-
-    for (auto &mesh : model.meshes) {
-        for (uint32_t i = 0; i < instances; ++i) {
-            mesh.drawData.push_back({
-                .material = mesh.material,
-                .transform = glm::mat4(1.0f),
-            });
-        }
-
-        size_t drawDataSize = mesh.drawData.size() * sizeof(InstanceDrawData);
-        mesh.drawDataBuffers.create(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
+    for (uint32_t i = 0; i < instances; ++i) {
+        modelInstances.push_back({ .transform = glm::mat4(1.0f) });
     }
 
     assets.materials.items[0].normalTex = loadTexture("res/textures/brickwall_normal.jpg", VK_FORMAT_R8G8B8A8_UNORM);
@@ -641,55 +626,35 @@ void Application::loadPlanetScene()
     float radius = 150.0;
     float offset = 25.0f;
 
-    for (auto &mesh : planet.meshes) {
-        glm::mat4 t = glm::mat4(1.0f);
-        t = glm::translate(t, glm::vec3(0.0f, -3.0f, 0.0f));
-        t = glm::scale(t, glm::vec3(32.0f, 32.0f, 32.0f));
+    glm::mat4 t = glm::mat4(1.0f);
+    t = glm::translate(t, glm::vec3(0.0f, -3.0f, 0.0f));
+    t = glm::scale(t, glm::vec3(8.0f, 8.0f, 8.0f));
 
-        mesh.drawData.push_back({
-            .material = mesh.material,
-            .transform = t,
-        });
+    planetInstances.push_back({ .transform = t });
 
-        size_t drawDataSize = mesh.drawData.size() * sizeof(InstanceDrawData);
-        mesh.drawDataBuffers.create(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
+    for (uint32_t i = 0; i < rocksCount; ++i) {
+        t = glm::mat4(1.0f);
+
+        // 1. translation: displace along circle with 'radius' in range [-offset, offset]
+        float angle = (float)i / (float)rocksCount * 360.0f;
+        float displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
+        float x = sin(angle) * radius + displacement;
+        displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
+        float y = displacement * 0.4f; // keep height of asteroid field smaller compared to width of x and z
+        displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
+        float z = cos(angle) * radius + displacement;
+        t = glm::translate(t, glm::vec3(x, y, z));
+
+        // 2. scale: Scale between 0.05 and 0.25f
+        float scale = static_cast<float>((rand() % 20) / 50.0 + 1.0f);
+        t = glm::scale(t, glm::vec3(scale));
+
+        // 3. rotation: add random rotation around a (semi)randomly picked rotation axis vector
+        float rotAngle = static_cast<float>((rand() % 360));
+        t = glm::rotate(t, rotAngle, glm::vec3(0.4f, 0.6f, 0.8f));
+
+        rockInstances.push_back({ .transform = t });
     }
-
-    planet.upload(vulkan.allocator);
-
-    for (auto &mesh : rock.meshes) {
-        for (uint32_t i = 0; i < rocksCount; ++i) {
-            glm::mat4 t(1.0f);
-
-            // 1. translation: displace along circle with 'radius' in range [-offset, offset]
-            float angle = (float)i / (float)rocksCount * 360.0f;
-            float displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
-            float x = sin(angle) * radius + displacement;
-            displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
-            float y = displacement * 0.4f; // keep height of asteroid field smaller compared to width of x and z
-            displacement = (rand() % (int)(2 * offset * 100)) / 100.0f - offset;
-            float z = cos(angle) * radius + displacement;
-            t = glm::translate(t, glm::vec3(x, y, z));
-
-            // 2. scale: Scale between 0.05 and 0.25f
-            float scale = static_cast<float>((rand() % 20) / 100.0 + 0.05);
-            t = glm::scale(t, glm::vec3(scale));
-
-            // 3. rotation: add random rotation around a (semi)randomly picked rotation axis vector
-            float rotAngle = static_cast<float>((rand() % 360));
-            t = glm::rotate(t, rotAngle, glm::vec3(0.4f, 0.6f, 0.8f));
-
-            mesh.drawData.push_back({
-                .material = mesh.material,
-                .transform = t,
-            });
-        }
-
-        size_t drawDataSize = mesh.drawData.size() * sizeof(InstanceDrawData);
-        mesh.drawDataBuffers.create(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
-    }
-
-    rock.upload(vulkan.allocator);
 }
 
 void Application::loadLights()
@@ -749,93 +714,63 @@ void Application::loadLights()
     size_t lightSize = sizeof(uint32_t) * 4 + sizeof(Light) * lights.size(); // (lights count + padding) + lights array
     lightDataBuffers.create(framesInFlight.size(), lightSize, vulkan.device, vulkan.allocator);
 
-    sphere = Model({ createSphere(0.2, 36, 18) });
-    sphere.upload(vulkan.allocator);
+    GeometryData sphereData = createSphere(0.2, 36, 18);
+    sphere = loadModel(sphereData.vertices, sphereData.indices);
 
-    for (auto &mesh : sphere.meshes) {
-        for (uint32_t i = 0; i < lights.size(); ++i) {
-            if (lights[i].type == LightType::Point) {
-                vke::Sphere lightVol = lightSphere(lights[i]);
-                std::cout << "light[" << i<<"] radius: " << lightVol.radius << std::endl;
-                mesh.drawData.push_back({
-                    .material = 0,
-                    .transform = glm::translate(glm::mat4(1.0f), glm::vec3(lights[i].position))
-                });
-            } else {
-                mesh.drawData.push_back({});
-            }
+    for (uint32_t i = 0; i < lights.size(); ++i) {
+        if (lights[i].type == LightType::Point) {
+            vke::Sphere lightVol = lightSphere(lights[i]);
+            std::cout << "light[" << i<<"] radius: " << lightVol.radius << std::endl;
+            lightInstances.push_back({
+                .transform = glm::translate(glm::mat4(1.0f), glm::vec3(lights[i].position))
+            });
+        } else {
+            lightInstances.push_back({});
         }
-
-        size_t drawDataSize = mesh.drawData.size() * sizeof(InstanceDrawData);
-        mesh.drawDataBuffers.create(framesInFlight.size(), drawDataSize, vulkan.device, vulkan.allocator);
     }
 }
 
 void Application::updateTestScene(float dt)
 {
-    for (auto &mesh : model.meshes) {
-        /*
-        for (auto &instance : mesh.drawData) {
-            auto &transform = instance.transform;
-            transform = glm::translate(glm::mat4(1.0f), objPosition) * glm::mat4_cast(glm::quat(objRotation));
-            transform = glm::scale(transform, glm::vec3(objScale));
-        }*/
+    float modelZ = 0.0f;
 
-        float modelZ = 0.0f;
+    for (int i = 0; i < (int)modelInstances.size(); ++i) {
+        glm::vec3 pos = objPosition + glm::vec3((float)((i%5) - 2) * 3.0f, -0.f, modelZ);
+        glm::mat4 transform = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(glm::quat(objRotation));
+        modelInstances[i].transform = glm::scale(transform, glm::vec3(objScale));
 
-        for (int i = 0; i < (int)mesh.drawData.size(); ++i) {
-            glm::vec3 pos = objPosition + glm::vec3((float)((i%5) - 2) * 3.0f, -0.f, modelZ);
-            glm::mat4 transform = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(glm::quat(objRotation));
-            transform = glm::scale(transform, glm::vec3(objScale));
-            mesh.drawData[i].transform = transform;
-
-            if (i%5 == 0) {
-                modelZ -= 2;
-            }
+        if (i%5 == 0) {
+            modelZ -= 2;
         }
-
-        mesh.updateDrawData(currentFrameIndex);
     }
 }
 
 void Application::updatePlanetScene(float dt)
 {
-    for (auto &mesh : planet.meshes) {
-        mesh.updateDrawData(currentFrameIndex);
+    #pragma omp parallel for
+    for (int i = 0; i < (int)rockInstances.size(); ++i) {
+        auto &t = rockInstances[i].transform;
+        auto pos = glm::vec3(t[3]);
+        auto t1 = glm::translate(glm::mat4(1.0f),-pos);
+        auto r = glm::rotate(glm::mat4(1.0f), glm::radians(dt), {0,1,0});
+        auto t2 = glm::translate(glm::mat4(1.0f), pos);
+        t = t1 * r * t2 * t;
     }
 
-    Frustum frustum(camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 1000.0f) * camera.view());
+    if (doCulling) {
+        Frustum frustum(camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 1000.0f) * camera.view());
 
-    for (auto &mesh : rock.meshes) {
-        #pragma omp parallel for
-        for (int i = 0; i < (int)mesh.drawData.size(); ++i) {
-            auto &t = mesh.drawData[i].transform;
-            auto pos = glm::vec3(t[3]);
-            auto t1 = glm::translate(glm::mat4(1.0f),-pos);
-            auto r = glm::rotate(glm::mat4(1.0f), glm::radians(dt), {0,1,0});
-            auto t2 = glm::translate(glm::mat4(1.0f), pos);
-            t = t1 * r * t2 * t;
-        }
+        timeToCullInstances = measureExecution<chrono::microseconds>([&]{
+            cullInstances(rockInstances, frustum);
+        });
 
-        if (doCulling) {
-            timeToCullInstances = measureExecution<chrono::microseconds>([&]{
-                cullInstances(mesh, frustum);
-            });
-
-            culledInstances = 0;
-            std::vector<InstanceDrawData> visibleInstances;
-            for (auto &instance : mesh.drawData) {
-                if (instance.isVisible)
-                    visibleInstances.push_back(instance);
-                else
-                    culledInstances++;
-            }
-
-            mesh.drawDataBuffers.update(currentFrameIndex, visibleInstances.data(), visibleInstances.size() * sizeof(InstanceDrawData));
-            mesh.visibleInstances = visibleInstances.size();
-        } else {
-            mesh.updateDrawData(currentFrameIndex);
-            mesh.visibleInstances = mesh.drawData.size();
+        culledInstances = 0;
+        visibleRocks.clear();
+        for (auto &instance : rockInstances) {
+            if (instance.isVisible)
+                visibleRocks.push_back(instance);
+            else
+                culledInstances++;
         }
     }
 }
@@ -850,12 +785,9 @@ void Application::updateLights(float dt)
     lightDataBuffers.update(currentFrameIndex, &lightsCount, sizeof(uint32_t));
     lightDataBuffers.update(currentFrameIndex, lights.data(), sizeof(Light)*lights.size(), sizeof(uint32_t) * 4);
 
-    for (auto &mesh : sphere.meshes) {
-        for (int i = 0; i < (int)mesh.drawData.size(); ++i) {
-            if (lights[i].type == LightType::Point)
-                mesh.drawData[i].transform = glm::translate(glm::mat4(1.0f), glm::vec3(lights[i].position));
-        }
-        mesh.updateDrawData(currentFrameIndex);
+    for (int i = 0; i < (int)lightInstances.size(); ++i) {
+        if (lights[i].type == LightType::Point)
+            lightInstances[i].transform = glm::translate(glm::mat4(1.0f), glm::vec3(lights[i].position));
     }
 
     // Update light clusters
@@ -873,38 +805,22 @@ void Application::updateLights(float dt)
     });
 }
 
-void Application::drawTestScene(VkCommandBuffer cmd)
+void Application::drawTestScene(VkCommandBuffer cmd, VkPipelineLayout layout)
 {
-    for (auto &mesh : model.meshes) {
-        // push mesh data constants
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 1, sizeof(VkDeviceAddress), &mesh.drawDataBuffers.buffers[currentFrameIndex].address);
-
-        mesh.draw(cmd, mesh.drawData.size());
-    }
+    model.draw(cmd, modelInstances, currentFrameIndex, layout);
 }
 
-void Application::drawPlanetScene(VkCommandBuffer cmd)
+void Application::drawPlanetScene(VkCommandBuffer cmd, VkPipelineLayout layout)
 {
-    for (auto &mesh : planet.meshes) {
-        // push mesh data constants
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 1, sizeof(VkDeviceAddress), &mesh.drawDataBuffers.buffers[currentFrameIndex].address);
-
-        mesh.draw(cmd, mesh.drawData.size());
-    }
-
-    for (auto &mesh : rock.meshes) {
-        // push mesh data constants
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 1, sizeof(VkDeviceAddress), &mesh.drawDataBuffers.buffers[currentFrameIndex].address);
-
-        mesh.draw(cmd, mesh.visibleInstances);
-    }
+    planet.draw(cmd, planetInstances, currentFrameIndex, layout);
+    rock.draw(cmd, doCulling ? visibleRocks : rockInstances, currentFrameIndex, layout);
 }
 
-void Application::cullInstances(vke::Mesh &mesh, const Frustum &frustum)
+void Application::cullInstances(std::vector<InstanceData> &instances, const Frustum &frustum)
 {
     #pragma omp parallel for
-    for (auto &instance : mesh.drawData) {
-        Volume v = mesh.volume.transformed(instance.transform);
+    for (auto &instance : instances) {
+        Volume v = rock.volume.transformed(instance.transform);
         instance.isVisible = frustum.intersect(v.min, v.max);
     }
 }

@@ -22,6 +22,7 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace std {
     template<> struct hash<vke::Vertex> {
@@ -384,6 +385,25 @@ uint32_t Engine::storePBRMaterial(const PBRMaterial &material)
     return assets.pbrMaterials.insert(material);
 }
 
+Model Engine::loadModel(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices)
+{
+    Model model;
+
+    model.meshes.push_back({
+        .indexCount = static_cast<uint32_t>(indices.size()),
+        .vertexCount = static_cast<uint32_t>(vertices.size()),
+        .volume = computeVolume(vertices)
+    });
+
+    model.nodes.push_back({
+        .meshIndex = 0
+    });
+
+    model.upload(vertices, indices, framesInFlight.size(), vulkan.device, vulkan.allocator);
+
+    return model;
+}
+
 Model Engine::loadModel(const std::string &path)
 {
     std::string extension = getFileExtension(path);
@@ -443,14 +463,18 @@ Model Engine::loadOBJ(const std::string &path)
         loadedMaterials.push_back(storeMaterial(material));
     }
 
-    std::vector<Mesh> meshes;
+    Model model;
+    std::unordered_map<Vertex, uint32_t> uniqueVertices;
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
 
     for (auto &shape : shapes) {
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
-        std::unordered_map<Vertex, uint32_t> uniqueVertices;
+        uint32_t firstIndex = static_cast<uint32_t>(vertices.size());
+        uint32_t firstVertex = static_cast<uint32_t>(indices.size());
+        uint32_t indexCount = 0;
+        uint32_t vertexCount = 0;
+        Volume volume(glm::vec3(FLT_MAX), glm::vec3(-FLT_MAX));
 
-        size_t currentIndex = 0;
         for (auto& index : shape.mesh.indices) {
             Vertex v;
 
@@ -477,27 +501,38 @@ Model Engine::loadOBJ(const std::string &path)
                 attrib.colors[index.vertex_index * 3 + 2]
             };
 
-            uint32_t material = shape.mesh.material_ids[currentIndex/3];
+            volume.updateDimensions(v.pos);
+
+            uint32_t material = shape.mesh.material_ids[indexCount/3];
             v.material = loadedMaterials.size() ? loadedMaterials[material] : 0;
 
             if (uniqueVertices.count(v) == 0) {
                 uniqueVertices[v] = static_cast<uint32_t>(vertices.size());
                 vertices.push_back(v);
+                vertexCount++;
             }
 
             indices.push_back(uniqueVertices[v]);
-            currentIndex++;
+            indexCount++;
         }
 
-        Mesh mesh(vertices, indices);
+        model.nodes.push_back({
+            .meshIndex = static_cast<int>(model.meshes.size()),
+        });
 
-        // set mesh material if any per-face material is defined
-        mesh.material = shape.mesh.material_ids.size() ? loadedMaterials[shape.mesh.material_ids[0]] : 0;
-
-        meshes.push_back(mesh);
+        model.meshes.push_back({
+            .firstIndex = firstIndex,
+            .indexCount = indexCount,
+            .firstVertex = firstVertex,
+            .vertexCount = vertexCount,
+            .materials = { shape.mesh.material_ids.size() ? loadedMaterials[shape.mesh.material_ids[0]] : 0 },
+            .volume = volume
+        });
     }
 
-    return Model(meshes);
+    model.upload(vertices, indices, framesInFlight.size(), vulkan.device, vulkan.allocator);
+
+    return model;
 }
 
 bool loadImageData(tinygltf::Image* image, const int imageIndex, std::string* error, std::string* warning,
@@ -512,9 +547,159 @@ bool loadImageData(tinygltf::Image* image, const int imageIndex, std::string* er
     return tinygltf::LoadImageData(image, imageIndex, error, warning, req_width, req_height, bytes, size, userData);
 }
 
+void loadGLTFMesh(int meshIndex, Model &model, tinygltf::Model &gltfModel, std::map<int,std::vector<int>> &loadedMeshes,
+    std::map<int,uint32_t> &loadedMaterials, std::vector<vke::Vertex> &vertices, std::vector<uint32_t> &indices)
+{
+    auto &mesh = gltfModel.meshes[meshIndex];
+    std::vector<int> generatedMeshIndices;
+
+    for (const auto& primitive : mesh.primitives) {
+        auto &posAccessor = gltfModel.accessors[primitive.attributes.at("POSITION")];
+        size_t vertexCount = posAccessor.count;
+        uint32_t firstIndex = static_cast<uint32_t>(indices.size());
+        uint32_t baseVertexIndex = static_cast<uint32_t>(vertices.size());
+        glm::vec3 minPos = glm::vec3(posAccessor.minValues[0], posAccessor.minValues[1], posAccessor.minValues[2]);
+        glm::vec3 maxPos = glm::vec3(posAccessor.maxValues[0], posAccessor.maxValues[1], posAccessor.maxValues[2]);
+        Volume volume(minPos, maxPos);
+
+        auto getBuffer = [&](const std::string &type){
+            const float *buf = nullptr;
+
+            if (primitive.attributes.find(type) != primitive.attributes.end()) {
+                const tinygltf::Accessor& accessor = gltfModel.accessors[primitive.attributes.at(type)];
+                const tinygltf::BufferView& view = gltfModel.bufferViews[accessor.bufferView];
+                buf = reinterpret_cast<const float*>(&gltfModel.buffers[view.buffer].data[accessor.byteOffset + view.byteOffset]);
+            }
+
+            return buf;
+        };
+
+        // get primitive vertices
+        const float *posBuffer = getBuffer("POSITION");
+        const float *normBuffer = getBuffer("NORMAL");
+        const float *tanBuffer = getBuffer("TANGENT");
+        const float *uvBuffer = getBuffer("TEXCOORD_0");
+        const float *colorBuffer = getBuffer("COLOR_0");
+        uint32_t colorComponents;
+        // TODO: JOINTS_0, WEIGHTS_0
+
+        if (colorBuffer)
+            colorComponents = gltfModel.accessors[primitive.attributes.at("COLOR_0")].type == TINYGLTF_PARAMETER_TYPE_FLOAT_VEC3 ? 3 : 4;
+
+        for (size_t i = 0; i < vertexCount; ++i) {
+            Vertex v {
+                .pos = glm::make_vec3(&posBuffer[i*3]),
+                .normal = normBuffer ? glm::make_vec3(&normBuffer[i*3]) : glm::vec3(0.0f),
+                .tangent = tanBuffer ? glm::make_vec3(&tanBuffer[i*4]) : glm::vec3(0.0f),
+                .uv = uvBuffer ? glm::make_vec2(&uvBuffer[i*2]) : glm::vec2(0.0f),
+                .color = colorBuffer ? (colorComponents == 3 ? glm::make_vec3(&colorBuffer[i*3]) : glm::make_vec3(&colorBuffer[i*4])) : glm::vec3(1.0f)
+            };
+
+            vertices.push_back(v);
+        }
+
+        // get primitive indices
+        const tinygltf::Accessor &indexAccessor = gltfModel.accessors[primitive.indices];
+        const tinygltf::BufferView &indexBufferView = gltfModel.bufferViews[indexAccessor.bufferView];
+        const tinygltf::Buffer &indexBuffer = gltfModel.buffers[indexBufferView.buffer];
+
+        size_t indexCount  = indexAccessor.count;
+
+        if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+            const uint16_t* buf = reinterpret_cast<const uint16_t*>(&indexBuffer.data[indexAccessor.byteOffset + indexBufferView.byteOffset]);
+            for (size_t i = 0; i < indexCount; i++)
+                indices.push_back(buf[i] + baseVertexIndex);
+        }
+
+        if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) {
+            const uint32_t* buf = reinterpret_cast<const uint32_t*>(&indexBuffer.data[indexAccessor.byteOffset + indexBufferView.byteOffset]);
+            for (size_t i = 0; i < indexCount; i++)
+                indices.push_back(buf[i] + baseVertexIndex);
+        }
+
+        if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+            const uint8_t* buf = reinterpret_cast<const uint8_t*>(&indexBuffer.data[indexAccessor.byteOffset + indexBufferView.byteOffset]);
+            for (size_t i = 0; i < indexCount; i++)
+                indices.push_back(buf[i] + baseVertexIndex);
+        }
+
+        Mesh mesh{
+            .firstIndex = firstIndex,
+            .indexCount = static_cast<uint32_t>(indexCount),
+            .firstVertex = baseVertexIndex,
+            .vertexCount = static_cast<uint32_t>(vertexCount),
+            .volume = volume,
+            .hasTangents = (tanBuffer != nullptr)
+        };
+
+        if (primitive.material >= 0)
+            mesh.materials = { loadedMaterials[primitive.material] };
+
+        generatedMeshIndices.push_back(model.meshes.size());
+        model.meshes.push_back(mesh);
+    }
+
+    loadedMeshes[meshIndex] = generatedMeshIndices;
+}
+
+void loadGLTFNode(int parentIndex, int nodeId, const tinygltf::Node &node, Model &model,
+    tinygltf::Model &gltfModel, std::map<int,std::vector<int>> &loadedMeshes)
+{
+    // new node index
+    int nodeIndex = model.nodes.size();
+
+    // compute node local matrix
+    glm::vec3 translation = glm::vec3(0.0f);
+    glm::quat rotation = {};
+    glm::vec3 scale = glm::vec3(1.0f);
+    glm::mat4 matrix = glm::mat4(1.0f);
+
+    if (node.translation.size() == 3)
+        translation = glm::make_vec3(node.translation.data());
+
+    if (node.rotation.size() == 4)
+        rotation = glm::make_quat(node.rotation.data());
+
+    if (node.scale.size() == 3)
+        scale = glm::make_vec3(node.scale.data());
+
+    if (node.matrix.size() == 16)
+        matrix = glm::make_mat4(node.matrix.data());
+
+    matrix = glm::translate(glm::mat4(1.0f), translation) * glm::mat4(rotation) * glm::scale(glm::mat4(1.0f), scale) * matrix;
+
+    model.nodes.push_back({
+        .localMatrix = matrix,
+        .parentIndex = parentIndex,
+        .nodeId = nodeId, // gltf node id, used for skin/animations
+    });
+
+    if (node.mesh >= 0) {
+        if (loadedMeshes[node.mesh].size() > 1) {
+            // generate children nodes if mesh has multiple submeshes
+            for (auto &meshIndex : loadedMeshes[node.mesh]) {
+                model.nodes.push_back({
+                    .parentIndex = nodeIndex,
+                    .meshIndex = meshIndex,
+                    .nodeId = nodeId
+                });
+            }
+        } else {
+            // assign mesh to node
+            model.nodes[nodeIndex].meshIndex = loadedMeshes[node.mesh][0];
+        }
+    }
+
+    // recursive call to load children
+    if (node.children.size() > 0) {
+        for (size_t i = 0; i < node.children.size(); i++)
+            loadGLTFNode(nodeIndex, node.children[i], gltfModel.nodes[node.children[i]], model, gltfModel, loadedMeshes);
+    }
+}
+
 Model Engine::loadGLTF(const std::string &path)
 {
-    tinygltf::Model model;
+    tinygltf::Model gltfModel;
     tinygltf::TinyGLTF loader;
     std::string err;
     std::string warn;
@@ -523,22 +708,21 @@ Model Engine::loadGLTF(const std::string &path)
     loader.SetImageLoader(loadImageData, nullptr);
 
     if (getFileExtension(path) == "glb") {
-        res = loader.LoadBinaryFromFile(&model, &err, &warn, path);
+        res = loader.LoadBinaryFromFile(&gltfModel, &err, &warn, path);
     } else {
-        res = loader.LoadASCIIFromFile(&model, &err, &warn, path);
+        res = loader.LoadASCIIFromFile(&gltfModel, &err, &warn, path);
     }
 
-    if (!warn.empty()) {
+    if (!warn.empty())
         std::cout << "GLTF Warning: " << warn << std::endl;
-    }
 
-    if (!err.empty() || !res) {
+    if (!err.empty() || !res)
         std::cerr << "GLTF Error: " << err << std::endl;
-        if (!res)
-            throw std::runtime_error("Failed to load glTF model from " + path);
-    }
 
-    std::vector<Mesh> meshes;
+    if (!res)
+        throw std::runtime_error("Failed to load glTF model from " + path);
+
+    // first load all materials and textures
     std::map<int,uint32_t> loadedMaterials;
     std::map<int,uint32_t> loadedTextures;
 
@@ -551,14 +735,14 @@ Model Engine::loadGLTF(const std::string &path)
         if (loadedTextures.find(textureIndex) != loadedTextures.end())
             return loadedTextures[textureIndex];
 
-        auto gltfTexture = model.textures[textureIndex];
+        auto gltfTexture = gltfModel.textures[textureIndex];
         auto imageIndex = gltfTexture.source;
-        auto image = model.images[imageIndex];
+        auto image = gltfModel.images[imageIndex];
 
         if (image.bufferView >= 0) {
             // image embedded in model file
-            const auto& bufferView = model.bufferViews[image.bufferView];
-            const auto& buffer = model.buffers[bufferView.buffer];
+            const auto& bufferView = gltfModel.bufferViews[image.bufferView];
+            const auto& buffer = gltfModel.buffers[bufferView.buffer];
 
             if (image.mimeType == "image/ktx2" || image.mimeType == "image/ktx") {
                 const uint8_t* ktx2Data = buffer.data.data() + bufferView.byteOffset;
@@ -587,8 +771,8 @@ Model Engine::loadGLTF(const std::string &path)
         return id;
     };
 
-    for (size_t index = 0; index < model.materials.size(); ++index) {
-        auto &gltfMaterial = model.materials[index];
+    for (size_t index = 0; index < gltfModel.materials.size(); ++index) {
+        auto &gltfMaterial = gltfModel.materials[index];
 
         PBRMaterial material {
             .metallic = static_cast<float>(gltfMaterial.pbrMetallicRoughness.metallicFactor),
@@ -607,87 +791,26 @@ Model Engine::loadGLTF(const std::string &path)
         loadedMaterials[index] = storePBRMaterial(material);
     }
 
-    for (const auto& mesh : model.meshes) {
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
+    // then load meshes and nodes
+    Model model;
 
-        for (const auto& primitive : mesh.primitives) {
-            size_t vertexCount = model.accessors[primitive.attributes.at("POSITION")].count;
-            uint32_t baseVertexIndex = static_cast<uint32_t>(vertices.size());
+    // each mesh is split into multiple meshes, one per primitive. keep track of loaded meshes with a separate map
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    std::map<int,std::vector<int>> loadedMeshes;
 
-            auto getBuffer = [&](const std::string &type){
-                const float *buf = nullptr;
+    for (size_t i = 0; i < gltfModel.meshes.size(); ++i)
+        loadGLTFMesh(i, model, gltfModel, loadedMeshes, loadedMaterials, vertices, indices);
 
-                if (primitive.attributes.find(type) != primitive.attributes.end()) {
-                    const tinygltf::Accessor& accessor = model.accessors[primitive.attributes.at(type)];
-                    const tinygltf::BufferView& view = model.bufferViews[accessor.bufferView];
-                    buf = reinterpret_cast<const float*>(&model.buffers[view.buffer].data[accessor.byteOffset + view.byteOffset]);
-                }
+    const tinygltf::Scene &scene = gltfModel.scenes[gltfModel.defaultScene > -1 ? gltfModel.defaultScene : 0];
 
-                return buf;
-            };
+    for (size_t i = 0; i < scene.nodes.size(); i++)
+        loadGLTFNode(-1, scene.nodes[i], gltfModel.nodes[scene.nodes[i]], model, gltfModel, loadedMeshes);
 
-            // get primitive vertices
-            const float *posBuffer = getBuffer("POSITION");
-            const float *normBuffer = getBuffer("NORMAL");
-            const float *uvBuffer = getBuffer("TEXCOORD_0");
+    // upload data to gpu and return model
+    model.upload(vertices, indices, framesInFlight.size(), vulkan.device, vulkan.allocator);
 
-            for (size_t i = 0; i < vertexCount; ++i) {
-                Vertex v {
-                    .pos = { posBuffer[i*3], posBuffer[i*3+1], posBuffer[i*3+2] },
-                    .color = { 1.0f, 1.0f, 1.0f }
-                };
-
-                if (normBuffer)
-                    v.normal = { normBuffer[i*3], normBuffer[i*3+1], normBuffer[i*3+2] };
-
-                if (uvBuffer)
-                    v.uv = { uvBuffer[i*2], uvBuffer[i*2+1] };
-                    //v.uv = { uvBuffer[i*2], 1.0f - uvBuffer[i*2+1] };
-
-                vertices.push_back(v);
-            }
-
-            // get primitive indices
-            const tinygltf::Accessor &indexAccessor = model.accessors[primitive.indices];
-            const tinygltf::BufferView &indexBufferView = model.bufferViews[indexAccessor.bufferView];
-            const tinygltf::Buffer &indexBuffer = model.buffers[indexBufferView.buffer];
-
-            size_t indexCount  = indexAccessor.count;
-
-            if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
-                const uint16_t* buf = reinterpret_cast<const uint16_t*>(&indexBuffer.data[indexAccessor.byteOffset + indexBufferView.byteOffset]);
-                for (size_t i = 0; i < indexCount; i++)
-                    indices.push_back(buf[i] + baseVertexIndex);
-            }
-
-            if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) {
-                const uint32_t* buf = reinterpret_cast<const uint32_t*>(&indexBuffer.data[indexAccessor.byteOffset + indexBufferView.byteOffset]);
-                for (size_t i = 0; i < indexCount; i++)
-                    indices.push_back(buf[i] + baseVertexIndex);
-            }
-
-            if (indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
-                const uint8_t* buf = reinterpret_cast<const uint8_t*>(&indexBuffer.data[indexAccessor.byteOffset + indexBufferView.byteOffset]);
-                for (size_t i = 0; i < indexCount; i++)
-                    indices.push_back(buf[i] + baseVertexIndex);
-            }
-        }
-
-
-        Mesh _mesh(vertices, indices);
-
-        int material = mesh.primitives[0].material;
-
-        if (material >= 0) {
-            _mesh.material = loadedMaterials[material];
-            _mesh.isPBR = true;
-        }
-
-        meshes.push_back(_mesh);
-    }
-
-    return Model(meshes);
+    return model;
 }
 
 void Engine::renderFrame()

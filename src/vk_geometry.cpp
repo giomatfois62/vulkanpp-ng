@@ -3,7 +3,7 @@
 using namespace vke;
 
 
-Mesh vke::createTriangle()
+GeometryData vke::createTriangle()
 {
     std::vector<Vertex> vertices = {
         {{-1,-1,0}, {0,0,1}, {}, {0,0}, {1,0,0}},
@@ -13,10 +13,10 @@ Mesh vke::createTriangle()
 
     std::vector<uint32_t> indices = {0, 1, 2};
 
-    return Mesh(vertices, indices);
+    return { vertices, indices };
 }
 
-Mesh vke::createScreenQuad()
+GeometryData vke::createScreenQuad()
 {
     std::vector<Vertex> vertices = {
         {{-1,-1,0}, {0,0,1}, {}, {0,0}, {1,0,0}},
@@ -27,10 +27,10 @@ Mesh vke::createScreenQuad()
 
     std::vector<uint32_t> indices = {0, 1, 2, 2, 3, 0};
 
-    return Mesh(vertices, indices);
+    return { vertices, indices };
 }
 
-Mesh vke::createCube()
+GeometryData vke::createCube()
 {
     std::vector<Vertex> vertices = {
         {{-.5,-.5,.5},  {0,0,1}, {},  {0,0}},
@@ -73,11 +73,11 @@ Mesh vke::createCube()
         20, 21, 22, 22, 23, 20
     };
 
-    return Mesh(vertices, indices);
+    return { vertices, indices };
 }
 
 // https://www.songho.ca/opengl/gl_sphere.html#sphere
-Mesh vke::createSphere(float radius, int sectors, int stacks)
+GeometryData vke::createSphere(float radius, int sectors, int stacks)
 {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -148,11 +148,11 @@ Mesh vke::createSphere(float radius, int sectors, int stacks)
         }
     }
 
-    return Mesh(vertices, indices);
+    return { vertices, indices };
 }
 
 // https://www.songho.ca/opengl/gl_cylinder.html
-Mesh vke::createCylinder(float radius, float height, int sectors)
+GeometryData vke::createCylinder(float radius, float height, int sectors)
 {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -262,11 +262,11 @@ Mesh vke::createCylinder(float radius, float height, int sectors)
         }
     }
 
-    return Mesh(vertices, indices);
+    return { vertices, indices };
 }
 
 // https://www.songho.ca/opengl/gl_cone.html
-Mesh vke::createCone(float baseRadius, float height, int sectors, int stacks)
+GeometryData vke::createCone(float baseRadius, float height, int sectors, int stacks)
 {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -378,11 +378,11 @@ Mesh vke::createCone(float baseRadius, float height, int sectors, int stacks)
         }
     }
 
-    return Mesh(vertices, indices);
+    return { vertices, indices };
 }
 
 // https://www.songho.ca/opengl/gl_torus.html
-Mesh vke::createTorus(float majorRadius, float minorRadius, int sectors, int sides)
+GeometryData vke::createTorus(float majorRadius, float minorRadius, int sectors, int sides)
 {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -457,5 +457,5 @@ Mesh vke::createTorus(float majorRadius, float minorRadius, int sectors, int sid
         }
     }
 
-    return Mesh(vertices, indices);
+    return { vertices, indices };
 }

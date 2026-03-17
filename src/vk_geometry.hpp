@@ -5,19 +5,19 @@
 
 namespace vke {
 
-Mesh createTriangle();
+GeometryData createTriangle();
 
-Mesh createScreenQuad();
+GeometryData createScreenQuad();
 
-Mesh createCube();
+GeometryData createCube();
 
-Mesh createSphere(float radius, int sectors, int stacks);
+GeometryData createSphere(float radius, int sectors, int stacks);
 
-Mesh createCylinder(float radius, float height, int sectors);
+GeometryData createCylinder(float radius, float height, int sectors);
 
-Mesh createCone(float baseRadius, float height, int sectors, int stacks);
+GeometryData createCone(float baseRadius, float height, int sectors, int stacks);
 
-Mesh createTorus(float majorRadius, float minorRadius, int sectors, int sides);
+GeometryData createTorus(float majorRadius, float minorRadius, int sectors, int sides);
 
 } // end namespace vke
 

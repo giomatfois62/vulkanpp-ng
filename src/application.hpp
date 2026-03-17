@@ -36,9 +36,9 @@ protected:
     void updateTestScene(float dt);
     void updatePlanetScene(float dt);
     void updateLights(float dt);
-    void drawTestScene(VkCommandBuffer cmd);
-    void drawPlanetScene(VkCommandBuffer cmd);
-    void cullInstances(vke::Mesh &mesh, const vke::Frustum &frustum);
+    void drawTestScene(VkCommandBuffer cmd, VkPipelineLayout layout);
+    void drawPlanetScene(VkCommandBuffer cmd, VkPipelineLayout layout);
+    void cullInstances(std::vector<vke::InstanceData> &instances, const vke::Frustum &frustum);
 
     VkPipelineLayout pipelineLayout;
     VkPipeline pipeline;
@@ -50,11 +50,16 @@ protected:
     // test scene
     vke::Model model;
     vke::Model sphere;
+    std::vector<vke::InstanceData> modelInstances;
+    std::vector<vke::InstanceData> lightInstances;
 
     // planet scene
     vke::Model planet;
     vke::Model rock;
-    uint32_t rocksCount = 20000;
+    uint32_t rocksCount = 10000;
+    std::vector<vke::InstanceData> planetInstances;
+    std::vector<vke::InstanceData> rockInstances;
+    std::vector<vke::InstanceData> visibleRocks;
     size_t culledInstances = 0;
     double timeToCullInstances;
     bool doCulling = true;

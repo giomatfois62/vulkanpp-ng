@@ -72,6 +72,7 @@ public:
     uint32_t storeMaterial(const Material &material);
     uint32_t storePBRMaterial(const PBRMaterial &material);
 
+    Model loadModel(std::vector<vke::Vertex> &vertices, const std::vector<uint32_t> &indices);
     Model loadModel(const std::string &path);
     Model loadOBJ(const std::string &path);
     Model loadGLTF(const std::string &path);

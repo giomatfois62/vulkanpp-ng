@@ -25,45 +25,8 @@ vke::VertexInputDescription Vertex::description()
     return description;
 }
 
-Mesh::Mesh()
-{
-
-}
-
-Mesh::Mesh(const std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices) :
-    vertices(vertices), indices(indices)
-{
-    computeVolume();
-    computeTangents();
-}
-
-void Mesh::computeVolume()
-{
-    glm::vec3 min = {FLT_MAX, FLT_MAX, FLT_MAX};
-    glm::vec3 max = {FLT_MIN, FLT_MIN, FLT_MIN};
-
-    for(Vertex v : vertices) {
-        min[0] = fminf(min[0], v.pos[0]);
-        min[1] = fminf(min[1], v.pos[1]);
-        min[2] = fminf(min[2], v.pos[2]);
-
-        max[0] = fmaxf(max[0], v.pos[0]);
-        max[1] = fmaxf(max[1], v.pos[1]);
-        max[2] = fmaxf(max[2], v.pos[2]);
-    }
-
-    for (size_t i = 0; i < 3; ++i) {
-        if ((max[i]-min[i]) == 0) {
-            max[i] += 0.0001;
-            min[i] -= 0.0001;
-        }
-    }
-
-    volume = Volume(min, max);
-}
-
 // https://www.opengl-tutorial.org/intermediate-tutorials/tutorial-13-normal-mapping/#computing-the-tangents-and-bitangents
-void Mesh::computeTangents()
+void vke::computeTangents(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices, uint32_t firstIndex, uint32_t indexCount)
 {
     // set current tangents/bitangents zero
     for (auto &v : vertices) {
@@ -71,7 +34,7 @@ void Mesh::computeTangents()
         //v.bitangent = { 0.f, 0.f, 0.f };
     }
 
-    for (size_t i = 0; i < indices.size(); i += 3) {
+    for (size_t i = firstIndex; i < indexCount; i += 3) {
         glm::vec3 &v0 = vertices[indices[i+0]].pos;
         glm::vec3 &v1 = vertices[indices[i+1]].pos;
         glm::vec3 &v2 = vertices[indices[i+2]].pos;
@@ -98,40 +61,35 @@ void Mesh::computeTangents()
     }
 }
 
-void Mesh::draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<InstanceDrawData> &instances)
+Volume vke::computeVolume(const std::vector<Vertex> &vertices)
 {
-    size_t drawDataSize = instances.size() * sizeof(InstanceDrawData);
+    Volume volume(glm::vec3(FLT_MAX), glm::vec3(-FLT_MAX));
 
-    if (drawDataBuffers.size < drawDataSize)
-        drawDataBuffers.recreate(drawDataBuffers.buffers.size(), drawData.size());
+    for(Vertex v : vertices)
+        volume.updateDimensions(v.pos);
 
-    drawDataBuffers.update(frameIndex, instances.data(), drawDataSize);
+    for (size_t i = 0; i < 3; ++i) {
+        if ((volume.max[i]-volume.min[i]) == 0) {
+            volume.max[i] += 0.0001;
+            volume.min[i] -= 0.0001;
+        }
+    }
 
-    draw(cmd, instances.size());
+    return volume;
 }
 
-void Mesh::draw(VkCommandBuffer cmd, uint32_t count)
-{
-    VkDeviceSize offset = 0;
-    VkDeviceSize vBufSize = sizeof(Vertex) * vertices.size();
-    vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer.handle, &offset);
-    vkCmdBindIndexBuffer(cmd, vertexBuffer.handle, vBufSize, VK_INDEX_TYPE_UINT32);
-
-    // mesh data pushconstants
-    //vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &shaderDataBuffers[currentFrameIndex].address);
-
-    // draw instanced
-    vkCmdDrawIndexed(cmd, indices.size(), count, 0, 0, 0);
-}
-
-void Mesh::upload(VmaAllocator allocator)
+void Model::upload(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices,
+    uint32_t framesInFlight, VkDevice device, VmaAllocator allocator)
 {
     this->allocator = allocator;
+    this->device = device;
+    this->vertexCount = vertices.size();
+    this->indexCount = indices.size();
 
+    // allocate vertex buffer
     VkDeviceSize vBufSize = vertices.size() * sizeof(Vertex);
     VkDeviceSize iBufSize = indices.size() * sizeof(uint32_t);
 
-    // allocate vertex buffer
     vertexBuffer = createBuffer(
         VkBufferCreateInfo{
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -145,6 +103,16 @@ void Mesh::upload(VmaAllocator allocator)
         allocator
     );
 
+    // generate tangents for vertices
+    for (auto &mesh : meshes) {
+        if (!mesh.hasTangents)
+            computeTangents(vertices, indices, mesh.firstIndex, mesh.indexCount);
+    }
+
+    // compute model volume
+    updateNodes(nodes);
+    computeVolume();
+
     // copy vertex data
     void *data;
 
@@ -152,55 +120,91 @@ void Mesh::upload(VmaAllocator allocator)
         memcpy(data, vertices.data(), vBufSize);
         memcpy(((char*)data) + vBufSize, indices.data(), iBufSize);
     vmaUnmapMemory(allocator, vertexBuffer.allocation);
-}
 
-void vke::Mesh::cleanup()
-{
-    vmaDestroyBuffer(allocator, vertexBuffer.handle, vertexBuffer.allocation);
+    // create SSBOs
+    instanceBuffers.resize(meshes.size());
 
-    drawDataBuffers.cleanup();
-}
-
-void Mesh::updateDrawData(uint32_t frameIndex)
-{
-    size_t dataSize = drawData.size() * sizeof(InstanceDrawData);
-    drawDataBuffers.update(frameIndex, drawData.data(), dataSize);
-}
-
-Model::Model(const std::vector<Mesh> &meshes) :
-    meshes(meshes)
-{
-    computeVolume();
-}
-
-Model::Model()
-{
-
-}
-
-void Model::draw(VkCommandBuffer cmd, uint32_t count)
-{
-    for (auto &mesh : meshes)
-        mesh.draw(cmd, count);
-}
-
-void vke::Model::upload(VmaAllocator allocator)
-{
-    for (auto &mesh : meshes)
-        mesh.upload(allocator);
+    for (auto &buffer : instanceBuffers)
+        buffer.create(framesInFlight, sizeof(InstanceData), device, allocator);
 }
 
 void Model::cleanup()
 {
-    for (auto &mesh : meshes)
-        mesh.cleanup();
+    if (allocator != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, vertexBuffer.handle, vertexBuffer.allocation);
+
+        for (auto &buffer : instanceBuffers)
+            buffer.cleanup();
+
+        instanceBuffers.clear();
+
+        nodes.clear();
+        meshes.clear();
+    }
 }
 
 void Model::computeVolume()
 {
-    if (meshes.size()) {
-        volume = meshes[0].volume;
-        for (size_t i = 1; i < meshes.size(); ++i)
-            volume = volume.minimumBoundingBox(meshes[i].volume);
+    volume = Volume(glm::vec3(FLT_MAX), glm::vec3(-FLT_MAX));
+
+    for (auto &node : nodes) {
+        if (node.meshIndex >= 0) {
+            Volume nodeVolume = meshes[node.meshIndex].volume.transformed(node.worldMatrix);
+            volume = volume.minimumBoundingBox(nodeVolume);
+        }
+    }
+}
+
+void Model::draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances,
+    uint32_t currentFrameIndex, VkPipelineLayout pipelineLayout)
+{
+    // create instance matrices for all meshes
+    std::vector<std::vector<InstanceData>> drawData(meshes.size());
+
+    for (auto & instance : instances) {
+        // make a copy of nodes array to compute world matrices
+        auto modelNodes = nodes;
+        updateNodes(modelNodes, instance.transform);
+
+        for (auto &node : modelNodes) {
+            if (node.meshIndex >= 0) {
+                auto &mesh = meshes[node.meshIndex];
+
+                drawData[node.meshIndex].push_back({
+                    .materialSet = mesh.materials[instance.materialSet],
+                    .transform = node.worldMatrix
+                });
+            }
+        }
+    }
+
+    // upload instances to mesh SSBOs
+    for (size_t i = 0; i <instanceBuffers.size(); ++i)
+        instanceBuffers[i].update(currentFrameIndex, drawData[i].data(), sizeof(InstanceData) * drawData[i].size());
+
+    // bind vertex buffer
+    VkDeviceSize offset = 0;
+    VkDeviceSize vBufSize = sizeof(Vertex) * vertexCount;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer.handle, &offset);
+    vkCmdBindIndexBuffer(cmd, vertexBuffer.handle, vBufSize, VK_INDEX_TYPE_UINT32);
+
+    // draw all meshes
+    for (size_t i = 0; i < meshes.size(); ++i) {
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 1,
+            sizeof(VkDeviceAddress), &instanceBuffers[i].buffers[currentFrameIndex].address);
+        vkCmdDrawIndexed(cmd, meshes[i].indexCount, drawData[i].size(), meshes[i].firstIndex, 0, 0);
+    }
+}
+
+void vke::updateNodes(std::vector<Node> &nodes, const glm::mat4 transform)
+{
+    if (!nodes.size())
+        return;
+
+    for (auto &node : nodes){
+        if (node.parentIndex < 0)
+            node.worldMatrix = transform * node.localMatrix;
+        else
+            node.worldMatrix = nodes[node.parentIndex].worldMatrix * node.localMatrix;
     }
 }
