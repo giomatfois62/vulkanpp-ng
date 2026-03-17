@@ -14,8 +14,8 @@
 namespace vke {
 
 template<typename T>
-struct SparseVector2 {
-    SparseVector2() { items.resize(1); } // reserve first item
+struct SparseVector {
+    SparseVector() { items.resize(1); } // reserve first item
 
     size_t insert(const T& item) {
         size_t id;
@@ -61,14 +61,11 @@ public:
     Model loadGLTF(const std::string &path);
 
     std::map<std::string, vke::Model> models;
-
-    SparseVector2<Texture> textures;
+    SparseVector<Texture> textures;
     std::map<std::string, uint32_t> texturesMap;
-
-    SparseVector2<Material> materials;
+    SparseVector<Material> materials;
     std::map<std::string, uint32_t> materialsMap;
-
-    SparseVector2<PBRMaterial> pbrMaterials;
+    SparseVector<PBRMaterial> pbrMaterials;
     std::map<std::string, uint32_t> pbrMaterialsMap;
 
 protected:

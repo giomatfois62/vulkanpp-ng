@@ -7,38 +7,7 @@
 
 #include <SDL.h>
 
-#include <queue>
-
 namespace vke {
-
-template<typename T>
-struct SparseVector {
-    SparseVector() { items.resize(1); } // reserve first item
-
-    size_t insert(const T& item) {
-        size_t id;
-
-        if (freeIDs.size()) {
-            id = freeIDs.front();
-            freeIDs.pop();
-            items[id] = item;
-        } else {
-            id = items.size();
-            items.push_back(item);
-        }
-
-        return id;
-    }
-
-    void remove(size_t id) { freeIDs.push(id); }// TODO: cleanup?
-
-    size_t dataSize() { return sizeof(T) * items.size(); }
-
-    T *data() { return items.data(); }
-
-    std::vector<T> items;
-    std::queue<size_t> freeIDs;
-};
 
 struct Frame {
     VkSemaphore imageAvailableSemaphore;
