@@ -22,8 +22,8 @@ struct Light {
     glm::vec4 diffuse;
     glm::vec4 specular;
     float constant = 1.0f;
-    float linear = 0.0f;
-    float quadratic = 0.0f;
+    float linear = 1.0f;
+    float quadratic = 1.0f;
     float cutOff;
     float outerCutOff;
     LightType type = LightType::Point;
