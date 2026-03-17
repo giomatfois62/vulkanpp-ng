@@ -1,7 +1,5 @@
-- load gltf material textures
 - instances + lights octrees
 - clustered/deferred shading
-- pbr material + rendering
 - skybox textures
 - improved camera (+orthomode)
 - stencil testing
@@ -21,11 +19,6 @@
 - drawIndirect
 - raytracing
 - procgen
-- move loadmodel/loadtexture functions to dedicated modules:
-    allocator (create buffer/image)
-    device (sampler+submit cmd)
-    commandpool (create cmd)
-    queue (submit cmd)
 
 DONE
 - draw indexed OK
@@ -49,3 +42,5 @@ DONE
 - remove bitangent OK
 - mesh constructor with vertices + compute AABB OK
 - frustrum culling OK
+- load gltf material textures OK
+- pbr material + rendering OK
