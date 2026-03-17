@@ -362,13 +362,7 @@ void Vulkan::createAllocator()
 
 void Vulkan::createCommandPool()
 {
-    VkCommandPoolCreateInfo commandPoolInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = queueFamilies.graphics.value()
-    };
-
-    VK_CHECK(vkCreateCommandPool(device, &commandPoolInfo, nullptr, &commandPool));
+    commandPool = vke::createCommandPool(queueFamilies.graphics.value(), device);
 }
 
 void Swapchain::init(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkDevice device)
@@ -596,4 +590,19 @@ void vke::submitCommandBuffer(VkCommandBuffer cmd, VkQueue queue, VkCommandPool 
     if (free) {
         vkFreeCommandBuffers(device, pool, 1, &cmd);
     }
+}
+
+VkCommandPool vke::createCommandPool(uint32_t queueFamilyIndex, VkDevice device)
+{
+    VkCommandPoolCreateInfo commandPoolInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = queueFamilyIndex
+    };
+
+    VkCommandPool commandPool;
+
+    VK_CHECK(vkCreateCommandPool(device, &commandPoolInfo, nullptr, &commandPool));
+
+    return commandPool;
 }

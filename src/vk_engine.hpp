@@ -3,13 +3,10 @@
 
 #include "vk_core.hpp"
 #include "vk_image.hpp"
-#include "vk_mesh.hpp"
-#include "vk_texture.hpp"
+#include "vk_scene.hpp"
 
 #include <SDL.h>
 
-#include <map>
-#include <string>
 #include <queue>
 
 namespace vke {
@@ -66,26 +63,6 @@ public:
 	void processEvents();
     void resize(int width, int height);
 
-    Texture createTexture(const TextureData &data);
-    uint32_t loadTexture(const std::string &path, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);
-    uint32_t storeTexture(const Texture &texture);
-    uint32_t storeMaterial(const Material &material);
-    uint32_t storePBRMaterial(const PBRMaterial &material);
-
-    Model loadModel(std::vector<vke::Vertex> &vertices, const std::vector<uint32_t> &indices);
-    Model loadModel(const std::string &path);
-    Model loadOBJ(const std::string &path);
-    Model loadGLTF(const std::string &path);
-
-    struct {
-        SparseVector<Texture> textures;
-        std::map<std::string, uint32_t> texturesMap;
-        SparseVector<Material> materials;
-        std::map<std::string, uint32_t> materialsMap;
-        SparseVector<PBRMaterial> pbrMaterials;
-        std::map<std::string, uint32_t> pbrMaterialsMap;
-    } assets;
-
     struct {
         double imguiEventsTime;
         double appEventsTime;
@@ -117,6 +94,7 @@ protected:
 
     Vulkan vulkan;
 	Swapchain swapchain;
+    Scene scene;
     Image drawImage;
     Image colorImage;
     Image depthImage;
@@ -145,6 +123,7 @@ private:
     void createFrameBuffers();
     void createFrameObjects();
     void createBindlessDescriptors();
+    void createScene();
 
     bool prepareFrame(Frame &frame);
     void presentFrame(Frame &frame);

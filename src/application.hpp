@@ -63,6 +63,7 @@ protected:
     size_t culledInstances = 0;
     double timeToCullInstances;
     bool doCulling = true;
+    bool pauseSimulation = false;
 
     struct {
         glm::mat4 projection;

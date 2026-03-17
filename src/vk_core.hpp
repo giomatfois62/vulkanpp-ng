@@ -10,6 +10,21 @@ class SDL_Window;
 
 namespace vke {
 
+constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+
+// https://henriquegois.dev/posts/bindless-resources-in-vulkan/
+// Select a binding for each descriptor type
+constexpr int STORAGE_BINDING = 0;
+constexpr int SAMPLER_BINDING = 1;
+constexpr int IMAGE_BINDING = 2;
+
+// Max count of each descriptor type
+// You can query the max values for these with
+// physicalDevice.getProperties().limits.maxDescriptrorSet*******
+constexpr int STORAGE_COUNT = 65536;
+constexpr int SAMPLER_COUNT = 65536;
+constexpr int IMAGE_COUNT = 65536;
+
 struct QueueFamilyIndices {
     std::optional<uint32_t> graphics;
     std::optional<uint32_t> present;
@@ -53,8 +68,8 @@ struct SwapchainSupportDetails {
 
 SwapchainSupportDetails querySwapchainSupport(VkPhysicalDevice gpu, VkSurfaceKHR surface);
 
+VkCommandPool createCommandPool(uint32_t queueFamilyIndex, VkDevice device);
 VkCommandBuffer createCommandBuffer(bool begin, VkCommandPool pool, VkDevice device);
-
 void submitCommandBuffer(VkCommandBuffer cmd, VkQueue queue, VkCommandPool pool, VkDevice device, bool free);
 
 class Vulkan {

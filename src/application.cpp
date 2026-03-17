@@ -60,8 +60,8 @@ void Application::draw(VkCommandBuffer cmd)
     sceneData.view = camera.view();
     sceneData.viewPos = { camera.position, 1.0f };
     sceneDataBuffers.update(currentFrameIndex, &sceneData, sizeof(sceneData));
-    materialBuffers.update(currentFrameIndex, assets.materials.data(), assets.materials.dataSize());
-    pbrMaterialBuffers.update(currentFrameIndex, assets.pbrMaterials.data(), assets.pbrMaterials.dataSize());
+    materialBuffers.update(currentFrameIndex, scene.materials.data(), scene.materials.dataSize());
+    pbrMaterialBuffers.update(currentFrameIndex, scene.pbrMaterials.data(), scene.pbrMaterials.dataSize());
 
     // begin dynamic rendering
     /*
@@ -194,6 +194,8 @@ void Application::drawUI()
     ImGui::Text("Time to cull instances: %lf micro", timeToCullInstances);
     ImGui::Text("Culled instances: %ld", culledInstances);
     ImGui::Checkbox("Cull instances:", &doCulling);
+    if (ImGui::Button("Pause Simulation"))
+        pauseSimulation = !pauseSimulation;
 
     const char* availableSamples[] = { "Disabled", "MSAA 2x", "MSAA 4x", "MSAA 8x", "MSAA 16x" };
     static int current = 0;
@@ -248,8 +250,8 @@ void Application::drawUI()
     ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0, 1);
     ImGui::Separator();
 
-    std::vector<std::string> materialsStr(assets.materials.items.size());
-    std::vector<const char*> materials(assets.materials.items.size());
+    std::vector<std::string> materialsStr(scene.materials.items.size());
+    std::vector<const char*> materials(scene.materials.items.size());
     for (size_t i = 0; i < materialsStr.size(); ++i) {
         std::string name = "Material_" + to_string(i);
         materialsStr[i] = name.c_str();
@@ -259,16 +261,16 @@ void Application::drawUI()
     /*
     static int selectedMaterial = model.meshes[0].material;
     ImGui::Combo("Material", &selectedMaterial, materials.data(), materials.size());
-    ImGui::ColorEdit3("Diffuse:", &assets.materials.items[selectedMaterial].diffuse[0]);
-    ImGui::ColorEdit3("Specular:", &assets.materials.items[selectedMaterial].specular[0]);
-    ImGui::SliderFloat("Shininess:", &assets.materials.items[selectedMaterial].shininess, 1, 512);
+    ImGui::ColorEdit3("Diffuse:", &scene.materials.items[selectedMaterial].diffuse[0]);
+    ImGui::ColorEdit3("Specular:", &scene.materials.items[selectedMaterial].specular[0]);
+    ImGui::SliderFloat("Shininess:", &scene.materials.items[selectedMaterial].shininess, 1, 512);
 
     static bool useNormalMap = true;
     if (ImGui::Checkbox("Normal Map:", &useNormalMap)) {
         if (useNormalMap) {
-            assets.materials.items = backupMaterials;
+            scene.materials.items = backupMaterials;
         } else {
-            for (auto &material : assets.materials.items) {
+            for (auto &material : scene.materials.items) {
                 material.bumpTex = 0;
             }
         }
@@ -562,10 +564,10 @@ void Application::loadAssets()
     loadPlanetScene();
     loadLights();
 
-    backupMaterials = assets.materials.items;
+    backupMaterials = scene.materials.items;
     sceneDataBuffers.create(framesInFlight.size(), sizeof(sceneData), vulkan.device, vulkan.allocator);
-    materialBuffers.create(framesInFlight.size(), assets.materials.dataSize(), vulkan.device, vulkan.allocator);
-    pbrMaterialBuffers.create(framesInFlight.size(), assets.pbrMaterials.dataSize(), vulkan.device, vulkan.allocator);
+    materialBuffers.create(framesInFlight.size(), scene.materials.dataSize(), vulkan.device, vulkan.allocator);
+    pbrMaterialBuffers.create(framesInFlight.size(), scene.pbrMaterials.dataSize(), vulkan.device, vulkan.allocator);
 }
 
 void Application::cleanupAssets()
@@ -596,7 +598,7 @@ void Application::loadTestScene()
     //model = loadGLTF("res/objects/gltf/voyager.gltf");
     //objScale = 0.1f;
     //model = loadGLTF("res/objects/gltf/voyager.gltf");
-    model = loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/sponza/sponza.gltf");
+    model = scene.loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/sponza/sponza.gltf");
     objScale = 0.1;
     //model = loadGLTF("res/objects/gltf/deer.gltf");
     //model = loadGLTF("res/objects/gltf/torusknot.gltf");
@@ -612,16 +614,16 @@ void Application::loadTestScene()
         modelInstances.push_back({ .transform = glm::mat4(1.0f) });
     }
 
-    assets.materials.items[0].normalTex = loadTexture("res/textures/brickwall_normal.jpg", VK_FORMAT_R8G8B8A8_UNORM);
-    assets.materials.items[0].diffuseTex = loadTexture("res/textures/brickwall.jpg");
+    scene.materials.items[0].normalTex = scene.loadTexture("res/textures/brickwall_normal.jpg", VK_FORMAT_R8G8B8A8_UNORM);
+    scene.materials.items[0].diffuseTex = scene.loadTexture("res/textures/brickwall.jpg");
 }
 
 void Application::loadPlanetScene()
 {
     //planet = loadOBJ("res/objects/planet/planet.obj");
     //rock = loadOBJ("res/objects/rock/rock.obj");
-    planet = loadModel("res/objects/gltf/lavaplanet.gltf");
-    rock = loadModel("res/objects/gltf/rock01.gltf");
+    planet = scene.loadModel("res/objects/gltf/lavaplanet.gltf");
+    rock = scene.loadModel("res/objects/gltf/rock01.gltf");
 
     float radius = 150.0;
     float offset = 25.0f;
@@ -715,7 +717,7 @@ void Application::loadLights()
     lightDataBuffers.create(framesInFlight.size(), lightSize, vulkan.device, vulkan.allocator);
 
     GeometryData sphereData = createSphere(0.2, 36, 18);
-    sphere = loadModel(sphereData.vertices, sphereData.indices);
+    sphere = scene.loadModel(sphereData.vertices, sphereData.indices);
 
     for (uint32_t i = 0; i < lights.size(); ++i) {
         if (lights[i].type == LightType::Point) {
@@ -747,14 +749,16 @@ void Application::updateTestScene(float dt)
 
 void Application::updatePlanetScene(float dt)
 {
-    #pragma omp parallel for
-    for (int i = 0; i < (int)rockInstances.size(); ++i) {
-        auto &t = rockInstances[i].transform;
-        auto pos = glm::vec3(t[3]);
-        auto t1 = glm::translate(glm::mat4(1.0f),-pos);
-        auto r = glm::rotate(glm::mat4(1.0f), glm::radians(dt), {0,1,0});
-        auto t2 = glm::translate(glm::mat4(1.0f), pos);
-        t = t1 * r * t2 * t;
+    if (!pauseSimulation) {
+        #pragma omp parallel for
+        for (int i = 0; i < (int)rockInstances.size(); ++i) {
+            auto &t = rockInstances[i].transform;
+            auto pos = glm::vec3(t[3]);
+            auto t1 = glm::translate(glm::mat4(1.0f),-pos);
+            auto r = glm::rotate(glm::mat4(1.0f), glm::radians(dt), {0,1,0});
+            auto t2 = glm::translate(glm::mat4(1.0f), pos);
+            t = t1 * r * t2 * t;
+        }
     }
 
     if (doCulling) {
