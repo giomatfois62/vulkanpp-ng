@@ -53,6 +53,10 @@ struct SwapchainSupportDetails {
 
 SwapchainSupportDetails querySwapchainSupport(VkPhysicalDevice gpu, VkSurfaceKHR surface);
 
+VkCommandBuffer createCommandBuffer(bool begin, VkCommandPool pool, VkDevice device);
+
+void submitCommandBuffer(VkCommandBuffer cmd, VkQueue queue, VkCommandPool pool, VkDevice device, bool free);
+
 class Vulkan {
 public:
     VkInstance instance;

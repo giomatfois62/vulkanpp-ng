@@ -538,3 +538,62 @@ VkSampleCountFlagBits vke::getMaxUsableSampleCount(VkPhysicalDeviceLimits limits
 
     return VK_SAMPLE_COUNT_1_BIT;
 }
+
+VkCommandBuffer vke::createCommandBuffer(bool begin, VkCommandPool pool, VkDevice device)
+{
+    VkCommandBufferAllocateInfo cmdAllocInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = pool,
+        .commandBufferCount = 1
+    };
+
+    VkCommandBuffer cmd;
+
+    VK_CHECK(vkAllocateCommandBuffers(device, &cmdAllocInfo, &cmd));
+
+    if (begin) {
+        VkCommandBufferBeginInfo cmdBeginInfo{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+        };
+
+        VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+    }
+
+    return cmd;
+}
+
+void vke::submitCommandBuffer(VkCommandBuffer cmd, VkQueue queue, VkCommandPool pool, VkDevice device, bool free)
+{
+    VK_CHECK(vkEndCommandBuffer(cmd));
+
+    VkFence fence;
+
+    VkFenceCreateInfo fenceInfo = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+
+    VkCommandBufferSubmitInfo cmdSubmitInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        .commandBuffer = cmd
+    };
+
+    VkSubmitInfo2 submit = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        //.waitSemaphoreInfoCount = waitSemaphoreInfo == nullptr ? 0 : 1,
+        //.pWaitSemaphoreInfos = waitSemaphoreInfo,
+        //.signalSemaphoreInfoCount = signalSemaphoreInfo == nullptr ? 0 : 1,
+        //.pSignalSemaphoreInfos = signalSemaphoreInfo,
+        .commandBufferInfoCount = 1,
+        .pCommandBufferInfos = &cmdSubmitInfo,
+    };
+
+    // submit command buffer to the queue and execute it.
+    VK_CHECK(vkCreateFence(device, &fenceInfo, nullptr, &fence));
+    VK_CHECK(vkQueueSubmit2(queue, 1, &submit, fence));
+    VK_CHECK(vkWaitForFences(device, 1, &fence, true, UINT64_MAX));
+
+    vkDestroyFence(device, fence, nullptr);
+
+    if (free) {
+        vkFreeCommandBuffers(device, pool, 1, &cmd);
+    }
+}
