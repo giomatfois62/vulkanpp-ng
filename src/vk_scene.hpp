@@ -5,10 +5,9 @@
 #include <vk_mem_alloc.h>
 
 #include "vk_mesh.hpp"
-#include "vk_texture.hpp"
+#include "vk_image.hpp"
 #include "vk_thread.hpp"
 
-#include <queue>
 #include <map>
 
 namespace vke {
@@ -45,7 +44,7 @@ struct SparseVector {
 class Scene
 {
 public:
-    void init(VkDevice device, VkQueue queue, uint32_t queueFamilyIndex, uint32_t framesInFlight,
+    void init(VkDevice device, uint32_t queueFamilyIndex, uint32_t framesInFlight,
         VmaAllocator allocator, VkDescriptorSet bindlessDescriptorSet);
     void cleanup();
 

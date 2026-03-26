@@ -30,13 +30,15 @@ template<> struct hash<vke::Vertex> {
 
 using namespace vke;
 
-void Scene::init(VkDevice device, VkQueue queue, uint32_t queueFamilyIndex, uint32_t framesInFlight, VmaAllocator allocator, VkDescriptorSet bindlessDescriptorSet)
+void Scene::init(VkDevice device, uint32_t queueFamilyIndex, uint32_t framesInFlight,
+    VmaAllocator allocator, VkDescriptorSet bindlessDescriptorSet)
 {
     this->device = device;
-    this->queue = queue;
     this->allocator = allocator;
     this->framesInFlight = framesInFlight;
     this->bindlessDescriptorSet = bindlessDescriptorSet;
+
+    vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
 
     commandPool = createCommandPool(queueFamilyIndex, device);
 }
@@ -44,14 +46,17 @@ void Scene::init(VkDevice device, VkQueue queue, uint32_t queueFamilyIndex, uint
 void Scene::cleanup()
 {
     for (auto &texture : textures.items)
-        texture.cleanup(device, allocator);
+        texture.cleanup();
 
     vkDestroyCommandPool(device, commandPool, nullptr);
 }
 
 Texture Scene::createTexture(const TextureData &data)
 {
-    Texture texture;
+    Texture texture{
+        .device = device,
+        .allocator = allocator
+    };
 
     Buffer uploadbuffer = createStagingBuffer(data.imageSize, allocator);
     memcpy(uploadbuffer.allocInfo.pMappedData, data.pixels.data(), data.imageSize);
