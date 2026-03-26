@@ -134,75 +134,14 @@ void Vulkan::create(SDL_Window *window)
     selectGPU();
     createDevice();
     createAllocator();
-    createCommandPool();
 }
 
 void Vulkan::cleanup()
 {
-    vkDestroyCommandPool(device, commandPool, nullptr);
     vmaDestroyAllocator(allocator);
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
-}
-
-VkCommandBuffer Vulkan::createCommandBuffer(bool begin)
-{
-    VkCommandBufferAllocateInfo cmdAllocInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = commandPool,
-        .commandBufferCount = 1
-    };
-
-    VkCommandBuffer cmd;
-
-    VK_CHECK(vkAllocateCommandBuffers(device, &cmdAllocInfo, &cmd));
-
-    if (begin) {
-        VkCommandBufferBeginInfo cmdBeginInfo{
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-        };
-
-        VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
-    }
-
-    return cmd;
-}
-
-void Vulkan::submitCommandBuffer(VkCommandBuffer cmd, VkQueue queue, bool free)
-{
-    VK_CHECK(vkEndCommandBuffer(cmd));
-
-    VkFence fence;
-
-    VkFenceCreateInfo fenceInfo = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-
-    VkCommandBufferSubmitInfo cmdSubmitInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-        .commandBuffer = cmd
-    };
-
-    VkSubmitInfo2 submit = {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-        //.waitSemaphoreInfoCount = waitSemaphoreInfo == nullptr ? 0 : 1,
-        //.pWaitSemaphoreInfos = waitSemaphoreInfo,
-        //.signalSemaphoreInfoCount = signalSemaphoreInfo == nullptr ? 0 : 1,
-        //.pSignalSemaphoreInfos = signalSemaphoreInfo,
-        .commandBufferInfoCount = 1,
-        .pCommandBufferInfos = &cmdSubmitInfo,
-    };
-
-    // submit command buffer to the queue and execute it.
-    VK_CHECK(vkCreateFence(device, &fenceInfo, nullptr, &fence));
-    VK_CHECK(vkQueueSubmit2(queue, 1, &submit, fence));
-    VK_CHECK(vkWaitForFences(device, 1, &fence, true, UINT64_MAX));
-
-    vkDestroyFence(device, fence, nullptr);
-
-    if (free) {
-        vkFreeCommandBuffers(device, commandPool, 1, &cmd);
-    }
 }
 
 void Vulkan::createInstance(SDL_Window *window)
@@ -360,11 +299,6 @@ void Vulkan::createAllocator()
     VK_CHECK(vmaCreateAllocator(&createInfo, &allocator));
 }
 
-void Vulkan::createCommandPool()
-{
-    commandPool = vke::createCommandPool(queueFamilies.graphics.value(), device);
-}
-
 void Swapchain::init(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkDevice device)
 {
     this->gpu = physicalDevice;
@@ -422,10 +356,7 @@ void Swapchain::create(uint32_t width, uint32_t height)
     // request one more image to the swapchain
     uint32_t minCount = supportDetails.capabilities.minImageCount;
     uint32_t maxCount = supportDetails.capabilities.maxImageCount;
-    uint32_t imageCount = minCount + 1;
-
-    if (maxCount > 0 && imageCount > maxCount)
-        imageCount = maxCount;
+    uint32_t imageCount = (maxCount > 0) ? std::min(minCount + 1, maxCount) : minCount + 1;
 
     VkSwapchainCreateInfoKHR createInfo{
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,

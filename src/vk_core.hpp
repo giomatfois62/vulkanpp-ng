@@ -10,20 +10,20 @@ class SDL_Window;
 
 namespace vke {
 
-constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+constexpr int MAX_FRAMES_IN_FLIGHT = 3;
 
 // https://henriquegois.dev/posts/bindless-resources-in-vulkan/
 // Select a binding for each descriptor type
 constexpr int STORAGE_BINDING = 0;
 constexpr int SAMPLER_BINDING = 1;
-constexpr int IMAGE_BINDING = 2;
+constexpr int IMAGE_BINDING   = 2;
 
 // Max count of each descriptor type
 // You can query the max values for these with
 // physicalDevice.getProperties().limits.maxDescriptrorSet*******
 constexpr int STORAGE_COUNT = 65536;
 constexpr int SAMPLER_COUNT = 65536;
-constexpr int IMAGE_COUNT = 65536;
+constexpr int IMAGE_COUNT   = 65536;
 
 struct QueueFamilyIndices {
     std::optional<uint32_t> graphics;
@@ -33,8 +33,6 @@ struct QueueFamilyIndices {
         return graphics.has_value() && present.has_value();
     }
 };
-
-QueueFamilyIndices findQueueFamilies(VkPhysicalDevice gpu, VkSurfaceKHR surface);
 
 struct GPUProperties {
     VkPhysicalDeviceProperties vk10;
@@ -57,17 +55,19 @@ struct GPUDetails {
     VkSampleCountFlagBits maxMSAASamples;
 };
 
-GPUDetails queryGPUDetails(VkPhysicalDevice gpu);
-VkSampleCountFlagBits getMaxUsableSampleCount(VkPhysicalDeviceLimits limits);
-
 struct SwapchainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR> presentModes;
 };
 
+// device queues and properties
+QueueFamilyIndices findQueueFamilies(VkPhysicalDevice gpu, VkSurfaceKHR surface);
+GPUDetails queryGPUDetails(VkPhysicalDevice gpu);
+VkSampleCountFlagBits getMaxUsableSampleCount(VkPhysicalDeviceLimits limits);
 SwapchainSupportDetails querySwapchainSupport(VkPhysicalDevice gpu, VkSurfaceKHR surface);
 
+// command submission
 VkCommandPool createCommandPool(uint32_t queueFamilyIndex, VkDevice device);
 VkCommandBuffer createCommandBuffer(bool begin, VkCommandPool pool, VkDevice device);
 void submitCommandBuffer(VkCommandBuffer cmd, VkQueue queue, VkCommandPool pool, VkDevice device, bool free);
@@ -83,7 +83,6 @@ public:
     VkQueue graphicsQueue;
     VkQueue presentQueue;
     VmaAllocator allocator;
-    VkCommandPool commandPool;
 
     const char *applicationName = "Vulkan Application";
     uint32_t applicationVersion = VK_MAKE_VERSION(1,0,0);
@@ -97,15 +96,11 @@ public:
     void create(SDL_Window *window);
     void cleanup();
 
-    VkCommandBuffer createCommandBuffer(bool begin);
-    void submitCommandBuffer(VkCommandBuffer cmd, VkQueue queue, bool free);
-
 protected:
     void createInstance(SDL_Window *window);
     void selectGPU();
     void createDevice();
     void createAllocator();
-    void createCommandPool();
 };
 
 class Swapchain {
