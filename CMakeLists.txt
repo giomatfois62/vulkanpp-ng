@@ -65,8 +65,8 @@ ${SRC_DIR}/vk_light.cpp
 ${SRC_DIR}/vk_mesh.cpp
 ${SRC_DIR}/vk_pipeline.cpp
 ${SRC_DIR}/vk_scene.cpp
-${SRC_DIR}/vk_texture.cpp
 ${SRC_DIR}/vk_thread.cpp
+${SRC_DIR}/vk_ui.cpp
 ${SRC_DIR}/vk_utils.cpp
 ${SRC_DIR}/vk_volume.cpp)
 add_executable(${PROJECT_NAME} ${SRC})
