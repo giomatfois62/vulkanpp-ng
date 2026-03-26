@@ -161,7 +161,7 @@ void Model::computeVolume()
 }
 
 void Model::draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances,
-    uint32_t currentFrameIndex, VkPipelineLayout pipelineLayout)
+    uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset)
 {
     // create instance matrices for all meshes
     std::vector<std::vector<InstanceData>> drawData(meshes.size());
@@ -184,8 +184,8 @@ void Model::draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances
     }
 
     // upload instances to mesh SSBOs
-    for (size_t i = 0; i <instanceBuffers.size(); ++i)
-        instanceBuffers[i].update(currentFrameIndex, drawData[i].data(), sizeof(InstanceData) * drawData[i].size());
+    for (size_t i = 0; i < instanceBuffers.size(); ++i)
+        instanceBuffers[i].update(frameIndex, drawData[i].data(), sizeof(InstanceData) * drawData[i].size());
 
     // bind vertex buffer
     VkDeviceSize offset = 0;
@@ -195,8 +195,8 @@ void Model::draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances
 
     // draw all meshes
     for (size_t i = 0; i < meshes.size(); ++i) {
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 1,
-            sizeof(VkDeviceAddress), &instanceBuffers[i].buffers[currentFrameIndex].address);
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, pushConstantOffset,
+                           sizeof(VkDeviceAddress), &instanceBuffers[i].deviceAddress(frameIndex));
         vkCmdDrawIndexed(cmd, meshes[i].indexCount, drawData[i].size(), meshes[i].firstIndex, 0, 0);
     }
 }

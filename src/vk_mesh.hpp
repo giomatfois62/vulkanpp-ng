@@ -92,7 +92,7 @@ struct Model {
     void upload(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices,
         uint32_t framesInFlight, VkDevice device, VmaAllocator allocator);
     void draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances,
-        uint32_t currentFrameIndex, VkPipelineLayout pipelineLayout);
+        uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset);
     void cleanup();
     void computeVolume();
 
