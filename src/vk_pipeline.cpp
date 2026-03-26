@@ -219,26 +219,3 @@ PipelineBuilder &PipelineBuilder::addShaderStage(VkShaderStageFlagBits stage, Vk
 
     return *this;
 }
-
-
-void PushConstant::addRange(VkShaderStageFlagBits shaderStage, uint32_t size)
-{
-    uint32_t offset = 0;
-
-    for (auto & range: ranges)
-        offset += range.size;
-
-    ranges.push_back({ shaderStage, offset, size }); // TODO: throw if max size exceeded
-}
-
-void PushConstant::pushRange(VkCommandBuffer cmd, VkPipelineLayout layout, size_t range, void *data)
-{
-    vkCmdPushConstants(
-        cmd,
-        layout,
-        ranges[range].stageFlags,
-        ranges[range].offset,
-        ranges[range].size,
-        data
-    );
-}

@@ -9,13 +9,6 @@ namespace vke {
 
 VkShaderModule createShaderModule(const std::string &path, VkDevice device);
 
-struct PushConstant {
-    void addRange(VkShaderStageFlagBits shaderStage, uint32_t size);
-    void pushRange(VkCommandBuffer cmd, VkPipelineLayout layout, size_t range, void *data);
-
-    std::vector<VkPushConstantRange> ranges;
-};
-
 class PipelineBuilder {
 public:
     PipelineBuilder();
