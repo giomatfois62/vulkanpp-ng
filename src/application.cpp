@@ -23,10 +23,13 @@ Application::Application(int argc, char **argv) :
     //clearValue.color = { {0.03f, 0.03f, 0.03f, 1.0f} };
     clearValue.color = { {0.00f, 0.00f, 0.00f, 1.0f} };
 
-    //camera = Camera(glm::vec3(0.0f, 1.0f, 3.0f));
-    camera = Camera(glm::vec3(0.0f, 1.0f, 155.0f));
+    camera = Camera(glm::vec3(0.0f, 1.0f, 3.0f));
+    //camera = Camera(glm::vec3(0.0f, 1.0f, 155.0f));
 
     octree = Octree(Volume({-10,-10,-10},{10,10,10}), 16, 8);
+
+    ///MSAASamples = VK_SAMPLE_COUNT_8_BIT;
+    swapchain.presentMode = VK_PRESENT_MODE_FIFO_KHR;
 }
 
 Application::~Application()
@@ -64,6 +67,7 @@ void Application::draw(VkCommandBuffer cmd)
     pbrMaterialBuffers.update(currentFrameIndex, scene.pbrMaterials.data(), scene.pbrMaterials.dataSize());
 
     // begin dynamic rendering
+
     /*
     VkRenderingAttachmentInfo colorAttachmentInfo{
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -76,6 +80,7 @@ void Application::draw(VkCommandBuffer cmd)
         .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, //VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue = clearValue
     };*/
+
     VkRenderingAttachmentInfo colorAttachmentInfo{
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = msaaEnabled() ? colorImage.view : drawImage.view,
@@ -100,9 +105,12 @@ void Application::draw(VkCommandBuffer cmd)
 
     auto extent = drawExtent();
 
+    // set pipeline dynamic states
+    setViewport(cmd, 0.0f, extent.height, extent.width, extent.height);
+    setScissor(cmd, 0, 0, extent.width, extent.height);
+
     VkRenderingInfo renderInfo{
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-        //.renderArea = { .extent = windowSize },
         .renderArea = { .extent = extent },
         .layerCount = 1,
         .colorAttachmentCount = 1,
@@ -118,41 +126,16 @@ void Application::draw(VkCommandBuffer cmd)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pbrPipeline);
     //vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    // set pipeline dynamic states
-    VkViewport viewport{
-        0.0f ,
-        static_cast<float>(extent.height),
-        static_cast<float>(extent.width),
-        -static_cast<float>(extent.height), // negative height to conform to opengl Y up
-        //static_cast<float>(windowSize.height),
-        //static_cast<float>(windowSize.width),
-        //-static_cast<float>(windowSize.height), // negative height to conform to opengl Y up
-        0.0f,
-        1.0f
-    };
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,camera), sizeof(VkDeviceAddress), &sceneDataBuffers.deviceAddress(currentFrameIndex));
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,materials), sizeof(VkDeviceAddress), &pbrMaterialBuffers.deviceAddress(currentFrameIndex));
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,lights), sizeof(VkDeviceAddress), &lightDataBuffers.deviceAddress(currentFrameIndex));
 
-    //VkRect2D scissor{ VkOffset2D{ 0, 0 }, windowSize };
-    VkRect2D scissor{ VkOffset2D{ 0, 0 }, extent };
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &sceneDataBuffers.buffers[currentFrameIndex].address);
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 2, sizeof(VkDeviceAddress), &pbrMaterialBuffers.buffers[currentFrameIndex].address);
-    //vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 2, sizeof(VkDeviceAddress), &materialBuffers.buffers[currentFrameIndex].address);
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 3, sizeof(VkDeviceAddress), &lightDataBuffers.buffers[currentFrameIndex].address);
-
-    //drawTestScene(cmd, pipelineLayout);
-    drawPlanetScene(cmd, pipelineLayout);
+    drawTestScene(cmd, pipelineLayout);
+    //drawPlanetScene(cmd, pipelineLayout);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightsPipeline);
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &sceneDataBuffers.buffers[currentFrameIndex].address);
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 2, sizeof(VkDeviceAddress), &materialBuffers.buffers[currentFrameIndex].address);
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress) * 3, sizeof(VkDeviceAddress), &lightDataBuffers.buffers[currentFrameIndex].address);
-
-    sphere.draw(cmd, lightInstances, currentFrameIndex, pipelineLayout);
+    sphere.draw(cmd, lightInstances, currentFrameIndex, pipelineLayout, offsetof(BindlessPushConstants,instances));
 
     vkCmdEndRendering(cmd);
 
@@ -180,7 +163,7 @@ void Application::draw(VkCommandBuffer cmd)
 
 void Application::drawUI()
 {
-    //ImGui::ShowDemoWindow();
+    ImGui::ShowDemoWindow();
     if (!paused)
         return;
 
@@ -233,19 +216,7 @@ void Application::drawUI()
     ImGui::SliderFloat3("Model Position", &objPosition[0], -10, 10);
     ImGui::SliderFloat3("Model Rotation", &objRotation[0], -10, 10);
     ImGui::SliderFloat("Model Scale", &objScale, 0, 3);
-    ImGui::Separator();        /*
-        float modelZ = 0.0f;
-
-        for (int i = 0; i < (int)mesh.drawData.size(); ++i) {
-            glm::vec3 pos = objPosition + glm::vec3((float)((i%5) - 2) * 3.0f, -0.f, modelZ);
-            glm::mat4 transform = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(glm::quat(objRotation));
-            transform = glm::scale(transform, glm::vec3(objScale));
-            mesh.drawData[i].transform = transform;
-
-            if (i%5 == 0) {
-                modelZ -= 2;
-            }
-        }*/
+    ImGui::Separator();
     ImGui::SliderFloat("Speed", &camera.movementSpeed, 0, 100);
     ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0, 1);
     ImGui::Separator();
@@ -322,8 +293,8 @@ void Application::update(float dt)
         if (keyState[SDL_SCANCODE_Z]) camera.processKeyboard(Camera::CameraMovement::DOWN, dt);
     }
 
-    //updateTestScene(dt);
-    updatePlanetScene(dt);
+    updateTestScene(dt);
+    //updatePlanetScene(dt);
     updateLights(dt);
 }
 
@@ -390,7 +361,7 @@ void Application::createPipelines()
     VkPushConstantRange range {
         .stageFlags = VK_SHADER_STAGE_ALL,
         .offset = 0,
-        .size = sizeof(VkDeviceAddress) * 4 // 4 buffers (camera, mesh, lights, materials)
+        .size = sizeof(BindlessPushConstants) // 4 buffers (camera, mesh, lights, materials)
     };
 
     VkPipelineLayoutCreateInfo layoutCreateInfo{
@@ -560,8 +531,8 @@ void Application::cleanupPipelines()
 
 void Application::loadAssets()
 {
-    //loadTestScene();
-    loadPlanetScene();
+    loadTestScene();
+    //loadPlanetScene();
     loadLights();
 
     backupMaterials = scene.materials.items;
@@ -599,7 +570,9 @@ void Application::loadTestScene()
     //objScale = 0.1f;
     //model = loadGLTF("res/objects/gltf/voyager.gltf");
     model = scene.loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/sponza/sponza.gltf");
-    objScale = 0.1;
+    //model = scene.loadGLTF("/home/crescoadmin/Projects/glTF-Sample-Assets/Models/CarbonFibre/glTF/CarbonFibre.gltf");
+    //model = scene.loadGLTF("/home/crescoadmin/Projects/Vulkan-Tutorial/attachments/simple_engine/Assets/bistro/bistro.gltf");
+    //objScale = 0.1;
     //model = loadGLTF("res/objects/gltf/deer.gltf");
     //model = loadGLTF("res/objects/gltf/torusknot.gltf");
 
@@ -813,13 +786,13 @@ void Application::updateLights(float dt)
 
 void Application::drawTestScene(VkCommandBuffer cmd, VkPipelineLayout layout)
 {
-    model.draw(cmd, modelInstances, currentFrameIndex, layout);
+    model.draw(cmd, modelInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances));
 }
 
 void Application::drawPlanetScene(VkCommandBuffer cmd, VkPipelineLayout layout)
 {
-    planet.draw(cmd, planetInstances, currentFrameIndex, layout);
-    rock.draw(cmd, doCulling ? visibleRocks : rockInstances, currentFrameIndex, layout);
+    planet.draw(cmd, planetInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances));
+    rock.draw(cmd, doCulling ? visibleRocks : rockInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances));
 }
 
 void Application::cullInstances(std::vector<InstanceData> &instances, const Frustum &frustum)

@@ -56,7 +56,7 @@ protected:
     // planet scene
     vke::Model planet;
     vke::Model rock;
-    uint32_t rocksCount = 10000;
+    uint32_t rocksCount = 30000;
     std::vector<vke::InstanceData> planetInstances;
     std::vector<vke::InstanceData> rockInstances;
     std::vector<vke::InstanceData> visibleRocks;
