@@ -2,7 +2,6 @@
 
 using namespace vke;
 
-
 GeometryData vke::createTriangle()
 {
     std::vector<Vertex> vertices = {
