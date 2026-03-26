@@ -72,6 +72,11 @@ VkDeviceAddress vke::getBufferAddress(VkBuffer buffer, VkDevice device)
     return vkGetBufferDeviceAddress(device, &addressInfo);
 }
 
+const VkDeviceAddress &ShaderBuffers::deviceAddress(uint32_t index)
+{
+    return buffers[index].address;
+}
+
 void ShaderBuffers::update(uint32_t index, const void *data, size_t size, size_t offset)
 {
     if (offset + size > this->size)

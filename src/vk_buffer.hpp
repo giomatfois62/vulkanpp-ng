@@ -29,6 +29,7 @@ struct ShaderBuffers {
     VkDevice device = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
 
+    const VkDeviceAddress &deviceAddress(uint32_t index);
     void update(uint32_t index, const void *data, size_t size, size_t offset = 0);
     void create(uint32_t count, size_t size, VkDevice device, VmaAllocator allocator);
     void recreate(uint32_t count, size_t size);
@@ -47,11 +48,8 @@ struct SSBOs : public ShaderBuffers {
 };
 
 Buffer createBuffer(VkBufferCreateInfo bufferInfo, VmaAllocationCreateInfo allocInfo, VmaAllocator allocator);
-
 Buffer createStagingBuffer(size_t size, VmaAllocator allocator);
-
 Buffer createUBO(size_t size, VmaAllocator allocator);
-
 Buffer createSSBO(size_t size, VmaAllocator allocator);
 
 VkDeviceAddress getBufferAddress(VkBuffer buffer, VkDevice device);
