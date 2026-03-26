@@ -16,6 +16,13 @@ struct Frame {
 	VkCommandBuffer mainCommandBuffer;
 };
 
+struct BindlessPushConstants {
+    VkDeviceAddress camera;
+    VkDeviceAddress instances;
+    VkDeviceAddress materials;
+    VkDeviceAddress lights;
+};
+
 class Engine {
 public:
 	Engine(int argc, char**argv);
@@ -49,6 +56,8 @@ protected:
     virtual void requestGPUFeatures(GPUFeatures &features);
 
     VkExtent2D drawExtent();
+    void setViewport(VkCommandBuffer cmd, float x, float y, float w, float h, bool invertY = true);
+    void setScissor(VkCommandBuffer cmd, int x, int y, uint32_t w, uint32_t h);
     void createRenderingResources();
     void cleanupRenderingResources();
 
@@ -80,6 +89,7 @@ protected:
     VkDescriptorPool descriptorPool;
     VkDescriptorSetLayout bindlessDescriptorSetLayout;
     VkDescriptorSet bindlessDescriptorSet;
+    VkPipelineLayout bindlessPipelineLayout;
 
 private:
 	void createWindow();

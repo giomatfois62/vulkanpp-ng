@@ -200,9 +200,10 @@ void Engine::processEvents()
         if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) && ImGui::GetIO().WantCaptureKeyboard)
             return;
 
+        /*
         if ((e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEWHEEL || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) &&
             ImGui::GetIO().WantCaptureMouse)
-            return;
+            return;*/
 
         benchmarks.appEventsTime = measureExecution<std::chrono::microseconds>([&]{
             processEvent(e);
@@ -323,6 +324,21 @@ VkExtent2D Engine::drawExtent()
         static_cast<uint32_t>(swapchain.extent.width * renderScale),
         static_cast<uint32_t>(swapchain.extent.height * renderScale)
     };
+}
+
+void Engine::setViewport(VkCommandBuffer cmd, float x, float y, float w, float h, bool invertY)
+{
+    // negative height to conform to opengl Y up
+    VkViewport viewport{ x, y, w, invertY ? -h : h, 0.0f, 1.0f };
+
+    vkCmdSetViewport(cmd, 0, 1, & viewport);
+}
+
+void Engine::setScissor(VkCommandBuffer cmd, int x, int y, uint32_t w, uint32_t h)
+{
+    VkRect2D scissor{ VkOffset2D{ x, y }, VkExtent2D{ w, h } };
+
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
 void Engine::createRenderingResources()
@@ -568,7 +584,7 @@ void Engine::drawImGui(VkCommandBuffer cmd)
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = swapchain.imageViews[currentImageIndex],
         .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        //.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
         //.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, //VK_ATTACHMENT_STORE_OP_STORE,
     };
 
@@ -816,7 +832,7 @@ void Engine::createBindlessDescriptors()
 
 void Engine::createScene()
 {
-    scene.init(vulkan.device, vulkan.graphicsQueue, vulkan.queueFamilies.graphics.value(),
+    scene.init(vulkan.device, vulkan.queueFamilies.graphics.value(),
         framesInFlight.size(), vulkan.allocator, bindlessDescriptorSet);
 }
 
