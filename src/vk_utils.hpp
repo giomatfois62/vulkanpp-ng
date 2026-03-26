@@ -44,11 +44,8 @@ double measureExecution(F func, Args&&... args){
 namespace vke {
 
 std::vector<char> readFile(const std::string &filename);
-
 std::string getFileExtension(const std::string &filename);
-
 std::string getFileDirectory(const std::string &filename);
-
 std::string getFileName(const std::string &filename);
 
 std::string errorString(VkResult errorCode);
