@@ -92,7 +92,9 @@ struct Model {
     void upload(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices,
         uint32_t framesInFlight, VkDevice device, VmaAllocator allocator);
     void draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances,
-        uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset);
+        uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset, bool multiDraw = true);
+    void updateInstances(const std::vector<InstanceData> &instances, uint32_t frameIndex);
+    void bind(VkCommandBuffer cmd);
     void cleanup();
     void computeVolume();
 
@@ -102,7 +104,9 @@ struct Model {
     size_t indexCount;
     vke::Volume volume;
     std::string name;
-    std::vector<vke::SSBOs> instanceBuffers;
+    vke::SSBOs instanceBuffer;
+    std::vector<VkDrawIndexedIndirectCommand> indirectDrawCommands;
+    vke::IndirectBuffers drawCommandsBuffer;
     Buffer vertexBuffer;
     VkDevice device = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;

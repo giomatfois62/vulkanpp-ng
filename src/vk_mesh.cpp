@@ -122,11 +122,9 @@ void Model::upload(std::vector<Vertex> &vertices, const std::vector<uint32_t> &i
         memcpy(((char*)data) + vBufSize, indices.data(), iBufSize);
     vmaUnmapMemory(allocator, vertexBuffer.allocation);
 
-    // create SSBOs
-    instanceBuffers.resize(meshes.size());
-
-    for (auto &buffer : instanceBuffers)
-        buffer.create(framesInFlight, sizeof(InstanceData), device, allocator);
+    // create instances and indirectDrawCommands buffers
+    instanceBuffer.create(framesInFlight, sizeof(InstanceData), device, allocator);
+    drawCommandsBuffer.create(framesInFlight, sizeof(VkDrawIndexedIndirectCommand), device, allocator);
 
     std::cout << "Uploaded model \"" << name << "\" with " << vertexCount << " vertices, " <<
         indexCount / 3 << " triangles, " << nodes.size() << " nodes, " <<
@@ -138,10 +136,8 @@ void Model::cleanup()
     if (allocator != VK_NULL_HANDLE) {
         vmaDestroyBuffer(allocator, vertexBuffer.handle, vertexBuffer.allocation);
 
-        for (auto &buffer : instanceBuffers)
-            buffer.cleanup();
-
-        instanceBuffers.clear();
+        drawCommandsBuffer.cleanup();
+        instanceBuffer.cleanup();
 
         nodes.clear();
         meshes.clear();
@@ -161,7 +157,36 @@ void Model::computeVolume()
 }
 
 void Model::draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances,
-    uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset)
+    uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset, bool multiDraw)
+{
+    updateInstances(instances, frameIndex);
+
+    bind(cmd);
+
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, pushConstantOffset,
+        sizeof(VkDeviceAddress), &instanceBuffer.deviceAddress(frameIndex));
+
+    if (multiDraw) {
+        vkCmdDrawIndexedIndirect(cmd, drawCommandsBuffer.buffer(frameIndex),
+            0, indirectDrawCommands.size(), sizeof(VkDrawIndexedIndirectCommand));
+    } else {
+        // multiple draw calls
+        for (size_t i = 0; i < indirectDrawCommands.size(); ++i) {
+            vkCmdDrawIndexedIndirect(cmd, drawCommandsBuffer.buffer(frameIndex),
+                i * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
+        }
+    }
+
+    // without draw indirect
+    /*
+    for (size_t i = 0; i < meshes.size(); ++i) {
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, pushConstantOffset,
+            sizeof(VkDeviceAddress), &instanceBuffers[i].deviceAddress(frameIndex));
+        vkCmdDrawIndexed(cmd, meshes[i].indexCount, drawData[i].size(), meshes[i].firstIndex, 0, 0);
+    }*/
+}
+
+void Model::updateInstances(const std::vector<InstanceData> &instances, uint32_t frameIndex)
 {
     // create instance matrices for all meshes
     std::vector<std::vector<InstanceData>> drawData(meshes.size());
@@ -183,22 +208,39 @@ void Model::draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances
         }
     }
 
-    // upload instances to mesh SSBOs
-    for (size_t i = 0; i < instanceBuffers.size(); ++i)
-        instanceBuffers[i].update(frameIndex, drawData[i].data(), sizeof(InstanceData) * drawData[i].size());
+    // create indirect draw commands
+    indirectDrawCommands.resize(drawData.size());
+    uint32_t firstInstance = 0;
+    for (size_t i = 0; i < drawData.size(); ++i) {
+        indirectDrawCommands[i] = {
+            .indexCount = meshes[i].indexCount,
+            .instanceCount = static_cast<uint32_t>(drawData[i].size()),
+            .firstIndex = meshes[i].firstIndex,
+            .firstInstance = firstInstance
+        };
+        firstInstance += static_cast<uint32_t>(drawData[i].size());
+    }
+    uint32_t totalInstances = firstInstance;
 
-    // bind vertex buffer
+    // upload instances to SSBO
+    instanceBuffer.recreate(instanceBuffer.buffers.size(), sizeof(InstanceData) * totalInstances);
+    size_t drawDataOffset = 0;
+    for (size_t i = 0; i < drawData.size(); ++i) {
+        size_t dataSize = sizeof(InstanceData) * drawData[i].size();
+        instanceBuffer.update(frameIndex, drawData[i].data(), dataSize, drawDataOffset);
+        drawDataOffset += dataSize;
+    }
+
+    drawCommandsBuffer.update(frameIndex, indirectDrawCommands.data(),
+        sizeof(VkDrawIndexedIndirectCommand) * indirectDrawCommands.size());
+}
+
+void Model::bind(VkCommandBuffer cmd)
+{
     VkDeviceSize offset = 0;
     VkDeviceSize vBufSize = sizeof(Vertex) * vertexCount;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer.handle, &offset);
     vkCmdBindIndexBuffer(cmd, vertexBuffer.handle, vBufSize, VK_INDEX_TYPE_UINT32);
-
-    // draw all meshes
-    for (size_t i = 0; i < meshes.size(); ++i) {
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, pushConstantOffset,
-                           sizeof(VkDeviceAddress), &instanceBuffers[i].deviceAddress(frameIndex));
-        vkCmdDrawIndexed(cmd, meshes[i].indexCount, drawData[i].size(), meshes[i].firstIndex, 0, 0);
-    }
 }
 
 void vke::updateNodes(std::vector<Node> &nodes, const glm::mat4 transform)

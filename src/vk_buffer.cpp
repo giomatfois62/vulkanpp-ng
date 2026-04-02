@@ -62,6 +62,39 @@ Buffer vke::createSSBO(size_t size, VmaAllocator allocator)
     return createBuffer(bufferInfo, allocInfo, allocator);
 }
 
+
+Buffer vke::createVBO(size_t size, VmaAllocator allocator)
+{
+    VkBufferCreateInfo bufferInfo{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size,
+        .usage = VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+    };
+
+    VmaAllocationCreateInfo allocInfo{
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO
+    };
+
+    return createBuffer(bufferInfo, allocInfo, allocator);
+}
+
+Buffer vke::createIndirectBuffer(size_t size, VmaAllocator allocator)
+{
+    VkBufferCreateInfo bufferInfo{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size,
+        .usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+    };
+
+    VmaAllocationCreateInfo allocInfo{
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO
+    };
+
+    return createBuffer(bufferInfo, allocInfo, allocator);
+}
+
 VkDeviceAddress vke::getBufferAddress(VkBuffer buffer, VkDevice device)
 {
     VkBufferDeviceAddressInfo addressInfo{
@@ -70,6 +103,11 @@ VkDeviceAddress vke::getBufferAddress(VkBuffer buffer, VkDevice device)
     };
 
     return vkGetBufferDeviceAddress(device, &addressInfo);
+}
+
+const VkBuffer &ShaderBuffers::buffer(uint32_t index)
+{
+    return buffers[index].handle;
 }
 
 const VkDeviceAddress &ShaderBuffers::deviceAddress(uint32_t index)
@@ -94,7 +132,23 @@ void ShaderBuffers::create(uint32_t count, size_t size, VkDevice device, VmaAllo
     this->size = size;
 
     for (uint32_t i = 0; i < count; ++i) {
-        Buffer buffer = type == BufferType::Uniform ? createUBO(size, allocator) : createSSBO(size, allocator);
+        //Buffer buffer = type == BufferType::Uniform ? createUBO(size, allocator) : createSSBO(size, allocator);
+        Buffer buffer;
+        switch(type) {
+        case BufferType::Uniform:
+            buffer = createUBO(size, allocator);
+            break;
+        case BufferType::Storage:
+            buffer = createSSBO(size, allocator);
+            break;
+        case BufferType::Vertex:
+            buffer = createVBO(size, allocator);
+            break;
+        case BufferType::Indirect:
+            buffer = createIndirectBuffer(size, allocator);
+            break;
+        }
+
         buffer.address = getBufferAddress(buffer.handle, device);
         buffers.push_back(buffer);
     }
@@ -102,6 +156,9 @@ void ShaderBuffers::create(uint32_t count, size_t size, VkDevice device, VmaAllo
 
 void ShaderBuffers::recreate(uint32_t count, size_t size)
 {
+    if (size == this->size)
+        return;
+
     cleanup();
 
     create(count, size, device, allocator);
