@@ -1,5 +1,6 @@
 - instances + lights octrees
 - clustered/deferred shading
+- render graph
 - skybox textures
 - improved camera (+orthomode)
 - stencil testing
@@ -7,7 +8,6 @@
 - threadpool + async load
 - vkformat checkers
 - glm common include
-- fix imgui framedrop
 - postprocessing
 - animations
 - compute shaders
@@ -44,3 +44,4 @@ DONE
 - frustrum culling OK
 - load gltf material textures OK
 - pbr material + rendering OK
+- fix imgui framedrop OK
