@@ -278,6 +278,7 @@ TextureData vke::loadTextureDataStb(const std::string &path, VkFormat format)
     }
 
     TextureData data = {
+        .path = path,
         .pixels = { pixels, pixels + imageSize },
         .imageSize = imageSize,
         //.format = VK_FORMAT_R8G8B8A8_UNORM,
@@ -302,6 +303,7 @@ TextureData vke::loadTextureDataKtx(const std::string &path)
     }
 
     TextureData data = {
+        .path = path,
         .pixels = { ktxTexture->pData, ktxTexture->pData + ktxTexture->dataSize },
         .imageSize = ktxTexture->dataSize,
         .format = ktxTexture_GetVkFormat(ktxTexture), // TODO: force to srgb if ktx-1

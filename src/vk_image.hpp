@@ -17,6 +17,7 @@ struct Image {
 };
 
 struct TextureData {
+    std::string path;
     std::vector<uint8_t> pixels;
     size_t imageSize;
     VkFormat format;
@@ -33,6 +34,7 @@ struct Texture {
     VkSampler sampler;
     VkDevice device = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
+    std::string name;
 
     void cleanup();
 };
