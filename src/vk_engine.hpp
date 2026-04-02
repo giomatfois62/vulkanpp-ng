@@ -86,10 +86,6 @@ protected:
 	uint32_t currentFrameIndex = 0;
 	VkClearValue clearValue;
     VkDescriptorPool imguiDescriptorPool;
-    VkDescriptorPool descriptorPool;
-    VkDescriptorSetLayout bindlessDescriptorSetLayout;
-    VkDescriptorSet bindlessDescriptorSet;
-    VkPipelineLayout bindlessPipelineLayout;
 
 private:
 	void createWindow();
@@ -101,7 +97,6 @@ private:
 	void createDefaultRenderPass();
     void createFrameBuffers();
     void createFrameObjects();
-    void createBindlessDescriptors();
     void createScene();
 
     bool prepareFrame(Frame &frame);

@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_vulkan.h"
+#include "IconsFontAwesome4.h"
 
 #include <SDL_vulkan.h>
 
@@ -70,7 +71,6 @@ void Engine::init()
     //createDefaultRenderPass();
     //createFrameBuffers();
     createFrameObjects();
-    createBindlessDescriptors();
     createScene();
     initImGui();
 
@@ -127,9 +127,6 @@ void Engine::cleanup()
 
     ImGui_ImplVulkan_Shutdown();
     vkDestroyDescriptorPool(vulkan.device, imguiDescriptorPool, nullptr);
-
-    vkDestroyDescriptorSetLayout(vulkan.device, bindlessDescriptorSetLayout, nullptr);
-    vkDestroyDescriptorPool(vulkan.device, descriptorPool, nullptr);
 
     for (auto &frame : framesInFlight) {
         vkDestroySemaphore(vulkan.device, frame.imageAvailableSemaphore, nullptr);
@@ -239,7 +236,7 @@ void Engine::renderFrame()
 
 	presentFrame(currentFrame);
 
-	currentFrameIndex = (currentFrameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+    currentFrameIndex = (currentFrameIndex + 1) % framesInFlightCount;
 }
 
 void Engine::beginDraw(VkCommandBuffer cmd)
@@ -406,6 +403,7 @@ void Engine::createVulkan()
 
     vulkan.requestedFeatures.vk10 = {
         .sampleRateShading = VK_TRUE,
+        .multiDrawIndirect = VK_TRUE,
         .fillModeNonSolid = VK_TRUE, // for wireframe rendering
         .samplerAnisotropy = VK_TRUE,
     };
@@ -729,7 +727,7 @@ void Engine::createFrameBuffers()
 
 void Engine::createFrameObjects()
 {
-	framesInFlight.resize(MAX_FRAMES_IN_FLIGHT);
+    framesInFlight.resize(framesInFlightCount);
 
     uint32_t queueFamilyIndex = vulkan.queueFamilies.graphics.value();
 
@@ -772,68 +770,9 @@ void Engine::createFrameObjects()
     }
 }
 
-void Engine::createBindlessDescriptors()
-{
-    std::vector<VkDescriptorPoolSize> poolSizes = {
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, STORAGE_COUNT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SAMPLER_COUNT},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, IMAGE_COUNT},
-    };
-
-    VkDescriptorPoolCreateInfo poolCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
-        .maxSets = 1,
-        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
-        .pPoolSizes = poolSizes.data()
-    };
-
-    VK_CHECK(vkCreateDescriptorPool(vulkan.device, &poolCreateInfo, nullptr, &descriptorPool));
-
-    std::vector<VkDescriptorSetLayoutBinding> bindings = {
-        {STORAGE_BINDING, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, STORAGE_COUNT, VK_SHADER_STAGE_ALL, nullptr},
-        {SAMPLER_BINDING, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SAMPLER_COUNT, VK_SHADER_STAGE_ALL, nullptr},
-        {IMAGE_BINDING, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, IMAGE_COUNT, VK_SHADER_STAGE_ALL, nullptr}
-    };
-
-    std::vector<VkDescriptorBindingFlags> bindingFlags = {
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
-    };
-
-    VkDescriptorSetLayoutBindingFlagsCreateInfo setLayoutBindingFlags{
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-        .bindingCount = static_cast<uint32_t>(bindingFlags.size()),
-        .pBindingFlags = bindingFlags.data()
-    };
-
-    VkDescriptorSetLayoutCreateInfo setLayoutCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .pNext = &setLayoutBindingFlags,
-        .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-        .bindingCount = static_cast<uint32_t>(bindings.size()),
-        .pBindings = bindings.data(),
-    };
-
-    VK_CHECK(vkCreateDescriptorSetLayout(vulkan.device, &setLayoutCreateInfo, nullptr, &bindlessDescriptorSetLayout));
-
-    std::vector<VkDescriptorSetLayout> sets = { bindlessDescriptorSetLayout };
-
-    VkDescriptorSetAllocateInfo setAllocateInfo{
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = descriptorPool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = sets.data()
-    };
-
-    VK_CHECK(vkAllocateDescriptorSets(vulkan.device, &setAllocateInfo, &bindlessDescriptorSet));
-}
-
 void Engine::createScene()
 {
-    scene.init(vulkan.device, vulkan.queueFamilies.graphics.value(),
-        framesInFlight.size(), vulkan.allocator, bindlessDescriptorSet);
+    scene.init(vulkan.device, vulkan.queueFamilies.graphics.value(), vulkan.allocator);
 }
 
 void Engine::initImGui()
@@ -879,6 +818,19 @@ void Engine::initImGui()
     };
 
     ImGui_ImplVulkan_Init(&initInfo);
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->AddFontDefault();
+    float baseFontSize = 13.0f; // 13.0f is the size of the default font. Change to the font size you use.
+    float iconFontSize = baseFontSize * 2.0f / 3.0f; // FontAwesome fonts need to have their sizes reduced by 2.0f/3.0f in order to align correctly
+
+    // merge in icons from Font Awesome
+    static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+    ImFontConfig icons_config;
+    icons_config.MergeMode = true;
+    icons_config.PixelSnapH = true;
+    icons_config.GlyphMinAdvanceX = iconFontSize;
+    io.Fonts->AddFontFromFileTTF("res/fonts/" FONT_ICON_FILE_NAME_FA, iconFontSize, &icons_config, icons_ranges);
 }
 
 bool Engine::prepareFrame(Frame &frame)
