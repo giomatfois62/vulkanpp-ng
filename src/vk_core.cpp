@@ -13,6 +13,8 @@
 using namespace std;
 using namespace vke;
 
+int vke::framesInFlightCount = 2;
+
 const std::vector<const char*> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };

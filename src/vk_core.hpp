@@ -10,7 +10,7 @@ class SDL_Window;
 
 namespace vke {
 
-constexpr int MAX_FRAMES_IN_FLIGHT = 3;
+extern int framesInFlightCount;
 
 // https://henriquegois.dev/posts/bindless-resources-in-vulkan/
 // Select a binding for each descriptor type
