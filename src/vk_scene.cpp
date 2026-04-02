@@ -30,17 +30,74 @@ template<> struct hash<vke::Vertex> {
 
 using namespace vke;
 
-void Scene::init(VkDevice device, uint32_t queueFamilyIndex, uint32_t framesInFlight,
-    VmaAllocator allocator, VkDescriptorSet bindlessDescriptorSet)
+void Scene::init(VkDevice device, uint32_t queueFamilyIndex, VmaAllocator allocator)
 {
     this->device = device;
     this->allocator = allocator;
-    this->framesInFlight = framesInFlight;
-    this->bindlessDescriptorSet = bindlessDescriptorSet;
 
     vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
 
     commandPool = createCommandPool(queueFamilyIndex, device);
+
+    createBindlessDescriptors();
+}
+
+void Scene::createBindlessDescriptors()
+{
+    std::vector<VkDescriptorPoolSize> poolSizes = {
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, STORAGE_COUNT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SAMPLER_COUNT},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, IMAGE_COUNT},
+    };
+
+    VkDescriptorPoolCreateInfo poolCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
+        .maxSets = 1,
+        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+        .pPoolSizes = poolSizes.data()
+    };
+
+    VK_CHECK(vkCreateDescriptorPool(device, &poolCreateInfo, nullptr, &descriptorPool));
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings = {
+        {STORAGE_BINDING, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, STORAGE_COUNT, VK_SHADER_STAGE_ALL, nullptr},
+        {SAMPLER_BINDING, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SAMPLER_COUNT, VK_SHADER_STAGE_ALL, nullptr},
+        {IMAGE_BINDING, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, IMAGE_COUNT, VK_SHADER_STAGE_ALL, nullptr}
+    };
+
+    std::vector<VkDescriptorBindingFlags> bindingFlags = {
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
+    };
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo setLayoutBindingFlags{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        .bindingCount = static_cast<uint32_t>(bindingFlags.size()),
+        .pBindingFlags = bindingFlags.data()
+    };
+
+    VkDescriptorSetLayoutCreateInfo setLayoutCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = &setLayoutBindingFlags,
+        .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+        .bindingCount = static_cast<uint32_t>(bindings.size()),
+        .pBindings = bindings.data(),
+    };
+
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &setLayoutCreateInfo, nullptr, &bindlessDescriptorSetLayout));
+
+    std::vector<VkDescriptorSetLayout> sets = { bindlessDescriptorSetLayout };
+
+    VkDescriptorSetAllocateInfo setAllocateInfo{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = descriptorPool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = sets.data()
+    };
+
+    VK_CHECK(vkAllocateDescriptorSets(device, &setAllocateInfo, &bindlessDescriptorSet));
 }
 
 void Scene::cleanup()
@@ -48,14 +105,21 @@ void Scene::cleanup()
     for (auto &texture : textures.items)
         texture.cleanup();
 
+    for (auto &model : models.items)
+        model.cleanup();
+
     vkDestroyCommandPool(device, commandPool, nullptr);
+
+    vkDestroyDescriptorSetLayout(device, bindlessDescriptorSetLayout, nullptr);
+    vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 }
 
 Texture Scene::createTexture(const TextureData &data)
 {
     Texture texture{
         .device = device,
-        .allocator = allocator
+        .allocator = allocator,
+        .name = data.path
     };
 
     Buffer uploadbuffer = createStagingBuffer(data.imageSize, allocator);
@@ -159,7 +223,7 @@ uint32_t Scene::loadTexture(const std::string &path, VkFormat format)
 
 uint32_t Scene::storeTexture(const Texture &texture)
 {
-    uint32_t textureID = textures.insert(texture);
+    uint32_t textureID = textures.insert(texture, texture.name.empty() ? "texture" : texture.name);
 
     VkDescriptorImageInfo imageInfo{
         .sampler = texture.sampler,
@@ -182,36 +246,42 @@ uint32_t Scene::storeTexture(const Texture &texture)
     return textureID;
 }
 
-uint32_t Scene::storeMaterial(const Material &material)
+uint32_t Scene::storeMaterial(const Material &material, const std::string &name)
 {
-    return materials.insert(material);
+    return materials.insert(material, name.empty() ? "material" : name);
 }
 
-uint32_t Scene::storePBRMaterial(const PBRMaterial &material)
+uint32_t Scene::storePBRMaterial(const PBRMaterial &material, const std::string &name)
 {
-    return pbrMaterials.insert(material);
+    return pbrMaterials.insert(material, name.empty() ? "material" : name);
 }
 
-Model Scene::loadModel(const std::string &path, const std::string &name)
+uint32_t Scene::storeModel(const Model &model)
+{
+    return models.insert(model, model.name.empty() ? "model" : model.name);
+}
+
+Model Scene::loadModel(const std::string &path)
 {
     std::string extension = getFileExtension(path);
 
     if (extension == "obj" || extension == "OBJ") {
-        return loadOBJ(path, name);
+        return loadOBJ(path);
     } else if (extension == "gltf" || extension == "GLTF" || extension == "glb" || extension == "GLB") {
-        return loadGLTF(path, name);
+        return loadGLTF(path);
     } else {
-        return loadGLTF(path, name); // fallback on gltf format
+        return loadGLTF(path); // fallback on gltf format
     }
 }
 
-Model Scene::loadOBJ(const std::string &path, const std::string &name)
+Model Scene::loadOBJ(const std::string &path)
 {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
 
     std::string baseDir = getFileDirectory(path);
+    std::string modelName = getFileName(path);
 
     if (!tinyobj::LoadObj(&attrib, &shapes, &materials, nullptr, nullptr, path.c_str(), baseDir.c_str())) {
         throw std::runtime_error("Failed loading obj from " + path);
@@ -248,10 +318,10 @@ Model Scene::loadOBJ(const std::string &path, const std::string &name)
             .normalTex = loadMaterialTexture(mat.normal_texname.size() ? mat.normal_texname : mat.bump_texname, VK_FORMAT_R8G8B8A8_UNORM),
         };
 
-        loadedMaterials.push_back(storeMaterial(material));
+        loadedMaterials.push_back(storeMaterial(material, modelName + "_" + mat.name));
     }
 
-    Model model{ .name = (name.empty()) ? getFileName(path) : name };
+    Model model{ .name = modelName };
     std::unordered_map<Vertex, uint32_t> uniqueVertices;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -318,7 +388,7 @@ Model Scene::loadOBJ(const std::string &path, const std::string &name)
         });
     }
 
-    model.upload(vertices, indices, framesInFlight, device, allocator);
+    model.upload(vertices, indices, framesInFlightCount, device, allocator);
 
     return model;
 }
@@ -340,6 +410,8 @@ void loadGLTFMesh(int meshIndex, Model &model, tinygltf::Model &gltfModel, std::
 {
     auto &mesh = gltfModel.meshes[meshIndex];
     std::vector<int> generatedMeshIndices;
+
+    std::cout << "Loading mesh " << mesh.name << std::endl;
 
     for (const auto& primitive : mesh.primitives) {
         auto &posAccessor = gltfModel.accessors[primitive.attributes.at("POSITION")];
@@ -365,6 +437,7 @@ void loadGLTFMesh(int meshIndex, Model &model, tinygltf::Model &gltfModel, std::
         // get primitive vertices
         const float *posBuffer = getBuffer("POSITION");
         const float *normBuffer = getBuffer("NORMAL");
+        std::string name;
         const float *tanBuffer = getBuffer("TANGENT");
         const float *uvBuffer = getBuffer("TEXCOORD_0");
         const float *colorBuffer = getBuffer("COLOR_0");
@@ -433,6 +506,8 @@ void loadGLTFMesh(int meshIndex, Model &model, tinygltf::Model &gltfModel, std::
 void loadGLTFNode(int parentIndex, int nodeId, const tinygltf::Node &node, Model &model,
     tinygltf::Model &gltfModel, std::map<int,std::vector<int>> &loadedMeshes)
 {
+    std::cout << "Loading node " << node.name << std::endl;
+
     // new node index
     int nodeIndex = model.nodes.size();
 
@@ -485,7 +560,7 @@ void loadGLTFNode(int parentIndex, int nodeId, const tinygltf::Node &node, Model
     }
 }
 
-Model Scene::loadGLTF(const std::string &path, const std::string &name)
+Model Scene::loadGLTF(const std::string &path)
 {
     tinygltf::Model gltfModel;
     tinygltf::TinyGLTF loader;
@@ -511,6 +586,7 @@ Model Scene::loadGLTF(const std::string &path, const std::string &name)
         throw std::runtime_error("Failed to load glTF model from " + path);
 
     // first load all materials and textures
+    std::string modelName = getFileName(path);
     std::map<int,uint32_t> loadedMaterials;
     std::map<int,uint32_t> loadedTextures;
 
@@ -526,6 +602,8 @@ Model Scene::loadGLTF(const std::string &path, const std::string &name)
         auto gltfTexture = gltfModel.textures[textureIndex];
         auto imageIndex = gltfTexture.source;
         auto image = gltfModel.images[imageIndex];
+
+        std::cout << "Loading texture " << gltfTexture.name << ", image: " << image.name << std::endl;
 
         if (image.bufferView >= 0) {
             // image embedded in model file
@@ -562,6 +640,8 @@ Model Scene::loadGLTF(const std::string &path, const std::string &name)
     for (size_t index = 0; index < gltfModel.materials.size(); ++index) {
         auto &gltfMaterial = gltfModel.materials[index];
 
+        std::cout << "Loading material " << gltfMaterial.name << std::endl;
+
         PBRMaterial material {
             .metallic = static_cast<float>(gltfMaterial.pbrMetallicRoughness.metallicFactor),
             .roughness = static_cast<float>(gltfMaterial.pbrMetallicRoughness.roughnessFactor),
@@ -576,11 +656,11 @@ Model Scene::loadGLTF(const std::string &path, const std::string &name)
                 material.baseColor[i] = static_cast<float>(gltfMaterial.pbrMetallicRoughness.baseColorFactor[i]);
         }
 
-        loadedMaterials[index] = storePBRMaterial(material);
+        loadedMaterials[index] = storePBRMaterial(material, modelName + "_" + gltfMaterial.name);
     }
 
     // then load meshes and nodes 
-    Model model{ .name = (name.empty()) ? getFileName(path) : name };
+    Model model{ .name = modelName };
 
     // each mesh is split into multiple meshes, one per primitive. keep track of loaded meshes with a separate map
     std::vector<Vertex> vertices;
@@ -596,7 +676,7 @@ Model Scene::loadGLTF(const std::string &path, const std::string &name)
         loadGLTFNode(-1, scene.nodes[i], gltfModel.nodes[scene.nodes[i]], model, gltfModel, loadedMeshes);
 
     // upload data to gpu and return model
-    model.upload(vertices, indices, framesInFlight, device, allocator);
+    model.upload(vertices, indices, framesInFlightCount, device, allocator);
 
     return model;
 }
@@ -615,7 +695,7 @@ Model Scene::loadModel(std::vector<Vertex> &vertices, const std::vector<uint32_t
         .meshIndex = 0
     });
 
-    model.upload(vertices, indices, framesInFlight, device, allocator);
+    model.upload(vertices, indices, framesInFlightCount, device, allocator);
 
     return model;
 }
