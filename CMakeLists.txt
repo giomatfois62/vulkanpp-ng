@@ -18,6 +18,7 @@ include_directories(${Vulkan_INCLUDE_DIRS})
 
 # external includes
 include_directories(external/imgui)
+include_directories(external/IconFontCppHeaders)
 include_directories(external/ktx/include)
 include_directories(external/ktx/other_include)
 include_directories(external/tinygltf)
@@ -35,8 +36,7 @@ set(IMGUI_SRC
     ${IMGUI_DIR}/imgui_stdlib.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
     ${IMGUI_DIR}/imgui_widgets.cpp)
-add_library(imgui STATIC ${IMGUI_SRC}
-    src/vk_geometry.hpp src/vk_geometry.cpp)
+add_library(imgui STATIC ${IMGUI_SRC})
 
 # ktx library
 set(KTX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/ktx)
