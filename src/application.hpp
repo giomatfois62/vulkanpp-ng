@@ -90,6 +90,7 @@ protected:
     glm::vec3 objPosition = {};
     glm::vec3 objRotation = {};
     bool paused = true;
+    bool multiDraw = true;
     std::vector<vke::Material> backupMaterials;
     vke::Octree octree;
 };

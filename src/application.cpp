@@ -2,6 +2,7 @@
 #include "vk_pipeline.hpp"
 #include "vk_utils.hpp"
 #include "vk_geometry.hpp"
+#include "vk_ui.hpp"
 
 #include "imgui.h"
 #include <random>
@@ -29,7 +30,7 @@ Application::Application(int argc, char **argv) :
     octree = Octree(Volume({-10,-10,-10},{10,10,10}), 16, 8);
 
     ///MSAASamples = VK_SAMPLE_COUNT_8_BIT;
-    swapchain.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    swapchain.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 }
 
 Application::~Application()
@@ -121,7 +122,7 @@ void Application::draw(VkCommandBuffer cmd)
     vkCmdBeginRendering(cmd, &renderInfo);
 
     // bind once for all draw commands
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &bindlessDescriptorSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &scene.bindlessDescriptorSet, 0, nullptr);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pbrPipeline);
     //vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -167,6 +168,8 @@ void Application::drawUI()
     if (!paused)
         return;
 
+    vke::drawUI(scene);
+
     ImGui::Text("ImGui Events Time: %lf micro", benchmarks.imguiEventsTime);
     ImGui::Text("App Events Time: %lf micro", benchmarks.appEventsTime);
     ImGui::Text("Rendering Time: %f milli", lagInMillisecs);
@@ -177,6 +180,7 @@ void Application::drawUI()
     ImGui::Text("Time to cull instances: %lf micro", timeToCullInstances);
     ImGui::Text("Culled instances: %ld", culledInstances);
     ImGui::Checkbox("Cull instances:", &doCulling);
+    ImGui::Checkbox("Multi Draw:", &multiDraw);
     if (ImGui::Button("Pause Simulation"))
         pauseSimulation = !pauseSimulation;
 
@@ -367,7 +371,7 @@ void Application::createPipelines()
     VkPipelineLayoutCreateInfo layoutCreateInfo{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
-        .pSetLayouts = &bindlessDescriptorSetLayout,
+        .pSetLayouts = &scene.bindlessDescriptorSetLayout,
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &range
     };
@@ -483,7 +487,7 @@ void Application::createOffscreenPipeline()
     VkPipelineLayoutCreateInfo layoutCreateInfo{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
-        .pSetLayouts = &bindlessDescriptorSetLayout,
+        .pSetLayouts = &scene.bindlessDescriptorSetLayout,
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &range
     };
@@ -786,13 +790,13 @@ void Application::updateLights(float dt)
 
 void Application::drawTestScene(VkCommandBuffer cmd, VkPipelineLayout layout)
 {
-    model.draw(cmd, modelInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances));
+    model.draw(cmd, modelInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances), multiDraw);
 }
 
 void Application::drawPlanetScene(VkCommandBuffer cmd, VkPipelineLayout layout)
 {
-    planet.draw(cmd, planetInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances));
-    rock.draw(cmd, doCulling ? visibleRocks : rockInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances));
+    planet.draw(cmd, planetInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances), multiDraw);
+    rock.draw(cmd, doCulling ? visibleRocks : rockInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances), multiDraw);
 }
 
 void Application::cullInstances(std::vector<InstanceData> &instances, const Frustum &frustum)
