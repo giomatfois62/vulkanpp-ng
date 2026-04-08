@@ -3,17 +3,29 @@
 
 #include "vk_core.hpp"
 #include "vk_image.hpp"
+#include "vk_renderer.hpp"
 #include "vk_scene.hpp"
+#include "vk_ui.hpp"
 
 #include <SDL.h>
 
 namespace vke {
+
+struct Window {
+    SDL_Window *handle = nullptr;
+    VkExtent2D extent = { 1024, 768 };
+    const char *title = "Vulkan Application";
+
+    void cleanup();
+};
 
 struct Frame {
     VkSemaphore imageAvailableSemaphore;
 	VkFence renderFinishedFence;
 	VkCommandPool commandPool;
 	VkCommandBuffer mainCommandBuffer;
+
+    void cleanup(VkDevice device);
 };
 
 struct BindlessPushConstants {
@@ -39,12 +51,6 @@ public:
 	void processEvents();
     void resize(int width, int height);
 
-    struct {
-        double imguiEventsTime;
-        double appEventsTime;
-        double renderingTime;
-    } benchmarks;
-
 protected:
 	virtual void onInit();
 	virtual void onCleanup();
@@ -55,14 +61,6 @@ protected:
     virtual void drawUI();
     virtual void requestGPUFeatures(GPUFeatures &features);
 
-    VkExtent2D drawExtent();
-    void setViewport(VkCommandBuffer cmd, float x, float y, float w, float h, bool invertY = true);
-    void setScissor(VkCommandBuffer cmd, int x, int y, uint32_t w, uint32_t h);
-    void createRenderingResources();
-    void cleanupRenderingResources();
-
-    bool msaaEnabled();
-    void recreateSwapchain();
     void waitIdle();
 
 	SDL_Window *window = nullptr;
@@ -73,41 +71,26 @@ protected:
     Vulkan vulkan;
 	Swapchain swapchain;
     Scene scene;
-    Image drawImage;
-    Image colorImage;
-    Image depthImage;
-    float renderScale = 1.0f;
-    VkSampleCountFlagBits MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    VkRenderPass renderPass;
-    std::vector<VkFramebuffer> frameBuffers; // one per swapchain image
+    Renderer renderer;
+    UI ui;
+
     std::vector<Frame> framesInFlight;
     std::vector<VkSemaphore> renderFinishedSemaphores; // one per swapchain image
 	uint32_t currentImageIndex = 0;
 	uint32_t currentFrameIndex = 0;
-	VkClearValue clearValue;
-    VkDescriptorPool imguiDescriptorPool;
 
 private:
 	void createWindow();
     void createVulkan();
     void createSwapchain();
-    void createDrawImage();
-    void createColorResources();
-    void createDepthResources();
-	void createDefaultRenderPass();
-    void createFrameBuffers();
-    void createFrameObjects();
+    void createFrames();
     void createScene();
+    void createRenderer();
+    void createUI();
 
     bool prepareFrame(Frame &frame);
     void presentFrame(Frame &frame);
     void renderFrame();
-    void beginDraw(VkCommandBuffer cmd);
-    void endDraw(VkCommandBuffer cmd);
-
-    void initImGui();
-    void updateImGui();
-    void drawImGui(VkCommandBuffer cmd);
 
 	bool shouldQuit = false;
     bool isHidden = false;

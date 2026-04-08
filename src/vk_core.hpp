@@ -106,7 +106,7 @@ protected:
 class Swapchain {
 public:
     void init(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkDevice device);
-    void create(uint32_t width, uint32_t height);
+    void resize(uint32_t width, uint32_t height);
     void cleanup();
 
     VkResult acquireNextImage(VkSemaphore signalSemaphore, uint32_t* imageIndex);

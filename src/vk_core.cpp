@@ -308,7 +308,7 @@ void Swapchain::init(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkDe
     this->device = device;
 }
 
-void Swapchain::create(uint32_t width, uint32_t height)
+void Swapchain::resize(uint32_t width, uint32_t height)
 {
     VkSwapchainKHR oldSwapchain = swapchain;
 

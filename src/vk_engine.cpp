@@ -3,8 +3,6 @@
 
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
-#include "imgui_impl_vulkan.h"
-#include "IconsFontAwesome4.h"
 
 #include <SDL_vulkan.h>
 
@@ -29,6 +27,21 @@ namespace std {
 
 using namespace std;
 using namespace vke;
+
+void Window::cleanup()
+{
+    SDL_DestroyWindow(handle);
+    handle = nullptr;
+}
+
+void Frame::cleanup(VkDevice device)
+{
+    vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
+    vkDestroyFence(device, renderFinishedFence, nullptr);
+
+    vkFreeCommandBuffers(device, commandPool, 1, &mainCommandBuffer);
+    vkDestroyCommandPool(device, commandPool, nullptr);
+}
 
 Engine::Engine(int, char**)
 {
@@ -65,14 +78,10 @@ void Engine::init()
 	createWindow();
     createVulkan();
     createSwapchain();
-    createDrawImage();
-    createColorResources();
-    createDepthResources();
-    //createDefaultRenderPass();
-    //createFrameBuffers();
-    createFrameObjects();
+    createFrames();
     createScene();
-    initImGui();
+    createRenderer();
+    createUI();
 
 	onInit();
 }
@@ -108,7 +117,6 @@ void Engine::loop()
 		update(dt);
 
         if (!isHidden) {
-            updateImGui();
             renderFrame();
         }
 
@@ -123,32 +131,17 @@ void Engine::cleanup()
 {
 	onCleanup();
 
+    ui.cleanup();
+    renderer.cleanup();
     scene.cleanup();
 
-    ImGui_ImplVulkan_Shutdown();
-    vkDestroyDescriptorPool(vulkan.device, imguiDescriptorPool, nullptr);
+    for (auto &frame : framesInFlight)
+        frame.cleanup(vulkan.device);
 
-    for (auto &frame : framesInFlight) {
-        vkDestroySemaphore(vulkan.device, frame.imageAvailableSemaphore, nullptr);
-        vkDestroyFence(vulkan.device, frame.renderFinishedFence, nullptr);
-
-        vkFreeCommandBuffers(vulkan.device, frame.commandPool, 1, &frame.mainCommandBuffer);
-        vkDestroyCommandPool(vulkan.device, frame.commandPool, nullptr);
-	}
-
-    for (auto &semaphore: renderFinishedSemaphores) {
+    for (auto &semaphore: renderFinishedSemaphores)
         vkDestroySemaphore(vulkan.device, semaphore, nullptr);
-    }
-
-    //for (auto &frameBuffer : frameBuffers)
-    //    vkDestroyFramebuffer(vulkan.device, frameBuffer, nullptr);
-
-    //vkDestroyRenderPass(vulkan.device, renderPass, nullptr);
-
-    cleanupRenderingResources();
 
     swapchain.cleanup();
-
     vulkan.cleanup();
 
 	SDL_DestroyWindow(window);
@@ -189,24 +182,13 @@ void Engine::processEvents()
 			}
 		}
 
-        benchmarks.imguiEventsTime = measureExecution<std::chrono::microseconds>([&]{
-            ImGui_ImplSDL2_ProcessEvent(&e);
-        });
+        ui.processEvent(e);
 
         // return if io.WantCaptureMouse or io.WantCaptureKeyboard is true
         if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) && ImGui::GetIO().WantCaptureKeyboard)
             return;
 
-        /*
-        if ((e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEWHEEL || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) &&
-            ImGui::GetIO().WantCaptureMouse)
-            return;*/
-
-        benchmarks.appEventsTime = measureExecution<std::chrono::microseconds>([&]{
-            processEvent(e);
-        });
-
-        //SDL_WaitEventTimeout(nullptr, 10);
+        processEvent(e);
 	}
 }
 
@@ -215,13 +197,21 @@ void Engine::resize(int width, int height)
 	windowSize.width = width;
 	windowSize.height = height;
 
-	recreateSwapchain();
+    waitIdle(); // wait for pending operations
+
+    swapchain.resize(width, height);
+    renderer.resize(width, height, swapchain.imageFormat);
+    ui.resize(width, height);
+
+    waitIdle(); // wait for pending init
 
 	onResize(width, height);
 }
 
 void Engine::renderFrame()
 {
+    ui.update([&]{ drawUI(); });
+
     Frame currentFrame = framesInFlight[currentFrameIndex];
 
 	if (!prepareFrame(currentFrame))
@@ -229,18 +219,7 @@ void Engine::renderFrame()
 
     VkCommandBuffer cmd = currentFrame.mainCommandBuffer;
 
-    beginDraw(cmd);
-    draw(cmd);
-    drawImGui(cmd);
-    endDraw(cmd);
-
-	presentFrame(currentFrame);
-
-    currentFrameIndex = (currentFrameIndex + 1) % framesInFlightCount;
-}
-
-void Engine::beginDraw(VkCommandBuffer cmd)
-{
+    // begin command buffer
     VK_CHECK(vkResetCommandBuffer(cmd, 0));
 
     VkCommandBufferBeginInfo cmdBeginInfo = {
@@ -250,27 +229,13 @@ void Engine::beginDraw(VkCommandBuffer cmd)
 
     VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
 
-    changeImageLayout(cmd, drawImage.handle,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // vkguide?
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
-    );
+    // render scene
+    renderer.render(cmd, swapchain.images[currentImageIndex], [&](VkCommandBuffer cmd){ draw(cmd); });
 
-    changeImageLayout(cmd, colorImage.handle,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
-    );
+    // render ui
+    ui.render(cmd, swapchain.imageViews[currentImageIndex]);
 
-    changeImageLayout(cmd, depthImage.handle,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, .levelCount = 1, .layerCount = 1 }
-    );
-}
-
-void Engine::endDraw(VkCommandBuffer cmd)
-{
+    // end command buffer
     changeImageLayout(cmd, swapchain.images[currentImageIndex],
         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
@@ -278,6 +243,11 @@ void Engine::endDraw(VkCommandBuffer cmd)
     );
 
     VK_CHECK(vkEndCommandBuffer(cmd));
+
+    // present frame
+	presentFrame(currentFrame);
+
+    currentFrameIndex = (currentFrameIndex + 1) % framesInFlightCount;
 }
 
 void Engine::waitIdle()
@@ -313,53 +283,6 @@ void Engine::drawUI()
 void Engine::requestGPUFeatures(GPUFeatures &)
 {
 
-}
-
-VkExtent2D Engine::drawExtent()
-{
-    return {
-        static_cast<uint32_t>(swapchain.extent.width * renderScale),
-        static_cast<uint32_t>(swapchain.extent.height * renderScale)
-    };
-}
-
-void Engine::setViewport(VkCommandBuffer cmd, float x, float y, float w, float h, bool invertY)
-{
-    // negative height to conform to opengl Y up
-    VkViewport viewport{ x, y, w, invertY ? -h : h, 0.0f, 1.0f };
-
-    vkCmdSetViewport(cmd, 0, 1, & viewport);
-}
-
-void Engine::setScissor(VkCommandBuffer cmd, int x, int y, uint32_t w, uint32_t h)
-{
-    VkRect2D scissor{ VkOffset2D{ x, y }, VkExtent2D{ w, h } };
-
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-}
-
-void Engine::createRenderingResources()
-{
-    createDrawImage();
-    createColorResources();
-    createDepthResources();
-}
-
-void Engine::cleanupRenderingResources()
-{
-    vkDestroyImageView(vulkan.device, depthImage.view, nullptr);
-    vmaDestroyImage(vulkan.allocator, depthImage.handle, depthImage.allocation);
-
-    vkDestroyImageView(vulkan.device, colorImage.view, nullptr);
-    vmaDestroyImage(vulkan.allocator, colorImage.handle, colorImage.allocation);
-
-    vkDestroyImageView(vulkan.device, drawImage.view, nullptr);
-    vmaDestroyImage(vulkan.allocator, drawImage.handle, drawImage.allocation);
-}
-
-bool Engine::msaaEnabled()
-{
-    return MSAASamples != VK_SAMPLE_COUNT_1_BIT;
 }
 
 void Engine::update(float)
@@ -432,300 +355,10 @@ void Engine::createVulkan()
 void Engine::createSwapchain()
 {
     swapchain.init(vulkan.gpu, vulkan.surface, vulkan.device);
-	swapchain.create(windowSize.width, windowSize.height);
+    swapchain.resize(windowSize.width, windowSize.height);
 }
 
-void Engine::createDrawImage()
-{
-    auto extent = drawExtent();
-
-    drawImage = createImage(
-        VkImageCreateInfo{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = VK_IMAGE_TYPE_2D,
-            .format = swapchain.imageFormat,
-            .extent = { extent.width, extent.height, 1 },
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-        },
-        VmaAllocationCreateInfo{
-            .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE
-        },
-        vulkan.allocator
-    );
-
-    VkImageViewCreateInfo viewInfo{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = drawImage.handle,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = swapchain.imageFormat,
-        .subresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
-    };
-
-    VK_CHECK(vkCreateImageView(vulkan.device, &viewInfo, nullptr, &drawImage.view));
-}
-
-void Engine::createColorResources()
-{
-    auto extent = drawExtent();
-
-    colorImage = createImage(
-        VkImageCreateInfo{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = VK_IMAGE_TYPE_2D,
-            .format = swapchain.imageFormat,
-            .extent = { extent.width, extent.height, 1 },
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = MSAASamples,
-            .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-        },
-        VmaAllocationCreateInfo{
-            .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE
-        },
-        vulkan.allocator
-    );
-
-    VkImageViewCreateInfo viewInfo{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = colorImage.handle,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = swapchain.imageFormat,
-        .subresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
-    };
-
-    VK_CHECK(vkCreateImageView(vulkan.device, &viewInfo, nullptr, &colorImage.view));
-}
-
-void Engine::createDepthResources()
-{
-    VkFormat format = findSupportedFormat(
-        { VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT },
-        VK_IMAGE_TILING_OPTIMAL,
-        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT,
-        vulkan.gpu
-    );
-
-    auto extent = drawExtent();
-
-    depthImage = createImage(
-        VkImageCreateInfo{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = VK_IMAGE_TYPE_2D,
-            .format = format,
-            .extent = { extent.width, extent.height, 1 },
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = MSAASamples,
-            .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
-        },
-        VmaAllocationCreateInfo{
-            .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE
-        },
-        vulkan.allocator
-    );
-
-    VkImageViewCreateInfo viewInfo{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = depthImage.handle,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = format,
-        //VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
-        .subresourceRange{ .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .levelCount = 1, .layerCount = 1 }
-    };
-
-    VK_CHECK(vkCreateImageView(vulkan.device, &viewInfo, nullptr, &depthImage.view));
-}
-
-void Engine::recreateSwapchain()
-{
-    waitIdle(); // wait for pending operations
-
-    swapchain.create(windowSize.width, windowSize.height);
-
-    cleanupRenderingResources();
-    createRenderingResources();
-
-    //vkDestroyRenderPass(vulkan.device, renderPass, nullptr);
-    //createDefaultRenderPass();
-
-    // rebuild objects with new swapchain
-    //for (auto &frameBuffer : frameBuffers)
-    //    vkDestroyFramebuffer(vulkan.device, frameBuffer, nullptr);
-    //createFrameBuffers();
-
-    waitIdle(); // wait for pending init
-}
-
-void Engine::updateImGui()
-{
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
-    ImGui::NewFrame();
-
-    drawUI();
-
-    ImGui::Render();
-}
-
-void Engine::drawImGui(VkCommandBuffer cmd)
-{
-    VkRenderingAttachmentInfo colorAttachmentInfo{
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView = swapchain.imageViews[currentImageIndex],
-        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-        //.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, //VK_ATTACHMENT_STORE_OP_STORE,
-    };
-
-    VkRenderingInfo renderInfo{
-        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea = { .extent = windowSize },
-        .layerCount = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &colorAttachmentInfo
-    };
-
-    vkCmdBeginRendering(cmd, &renderInfo);
-
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-
-    vkCmdEndRendering(cmd);
-}
-
-void Engine::createDefaultRenderPass()
-{
-    VkAttachmentDescription colorAttachment{
-        .format = swapchain.imageFormat,
-        .samples = MSAASamples,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = msaaEnabled() ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-    };
-
-    VkAttachmentReference colorAttachmentRef{
-        // attachment number will index into the pAttachments array in the parent renderpass itself
-        .attachment = 0,
-        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-    };
-
-    VkAttachmentDescription depthAttachment{
-        .format = depthImage.info.format,
-        .samples = MSAASamples,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-    };
-
-    VkAttachmentReference depthAttachmentRef{
-        .attachment = 1,
-        .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-    };
-
-    VkAttachmentDescription colorAttachmentResolve{
-        .format = swapchain.imageFormat,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-    };
-
-    VkAttachmentReference colorAttachmentResolveRef{
-        .attachment = 2,
-        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-    };
-
-    // we are going to create 1 subpass, which is the minimum you can do
-    VkSubpassDescription subpass{
-        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &colorAttachmentRef,
-        .pResolveAttachments = msaaEnabled() ? &colorAttachmentResolveRef : nullptr,
-        .pDepthStencilAttachment = &depthAttachmentRef
-    };
-
-    VkSubpassDependency dependency{
-        .srcSubpass = VK_SUBPASS_EXTERNAL,
-        .dstSubpass = 0,
-        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-    };
-
-    std::vector<VkAttachmentDescription> attachments = { colorAttachment, depthAttachment };
-
-    if (msaaEnabled()) {
-        dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        attachments.push_back(colorAttachmentResolve);
-    }
-
-    VkRenderPassCreateInfo renderPassInfo{
-        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = static_cast<uint32_t>(attachments.size()),
-        .pAttachments = attachments.data(),
-        .subpassCount = 1,
-        .pSubpasses = &subpass,
-        .dependencyCount = 1,
-        .pDependencies = &dependency
-    };
-
-    VK_CHECK(vkCreateRenderPass(vulkan.device, &renderPassInfo, nullptr, &renderPass));
-}
-
-void Engine::createFrameBuffers()
-{
-    // create the framebuffers for the swapchain images.
-    // this will connect the render-pass to the images for rendering
-    VkFramebufferCreateInfo frameBufferInfo{
-        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-        .pNext = nullptr,
-        .renderPass = renderPass,
-        .width = swapchain.extent.width,
-        .height = swapchain.extent.height,
-        .layers = 1
-    };
-
-    // grab how many images we have in the swapchain
-    const uint32_t imageCount = swapchain.images.size();
-
-    frameBuffers = std::vector<VkFramebuffer>(imageCount);
-
-    // create framebuffers for each of the swapchain image views
-    for (uint32_t i = 0; i < imageCount; i++) {
-        std::vector<VkImageView> attachments;
-
-        if (msaaEnabled()) {
-            attachments = { colorImage.view, depthImage.view, swapchain.imageViews[i] };
-        } else {
-            attachments = { swapchain.imageViews[i], depthImage.view };
-        }
-
-        frameBufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size()),
-        frameBufferInfo.pAttachments = attachments.data();
-
-        VK_CHECK(vkCreateFramebuffer(vulkan.device, &frameBufferInfo, nullptr, &frameBuffers[i]));
-    }
-}
-
-void Engine::createFrameObjects()
+void Engine::createFrames()
 {
     framesInFlight.resize(framesInFlightCount);
 
@@ -775,62 +408,15 @@ void Engine::createScene()
     scene.init(vulkan.device, vulkan.queueFamilies.graphics.value(), vulkan.allocator);
 }
 
-void Engine::initImGui()
+void Engine::createRenderer()
 {
-    std::vector<VkDescriptorPoolSize> poolSizes = {
-         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE },
-    };
+    renderer.init(vulkan.device, vulkan.gpu, vulkan.allocator, windowSize.width, windowSize.height, swapchain.imageFormat);
+}
 
-    uint32_t maxSets = 0;
-    for (VkDescriptorPoolSize& poolSize : poolSizes)
-        maxSets += poolSize.descriptorCount;
-
-    VkDescriptorPoolCreateInfo poolInfo{
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets = maxSets,
-        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
-        .pPoolSizes = poolSizes.data()
-    };
-
-    VK_CHECK(vkCreateDescriptorPool(vulkan.device, &poolInfo, nullptr, &imguiDescriptorPool));
-
-    ImGui::CreateContext();
-    ImGui_ImplSDL2_InitForVulkan(window);
-
-    //dynamic rendering parameters
-    VkPipelineRenderingCreateInfo renderInfo{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-        .colorAttachmentCount = 1,
-        .pColorAttachmentFormats = &swapchain.imageFormat,
-    };
-
-    ImGui_ImplVulkan_InitInfo initInfo{
-        .Instance = vulkan.instance,
-        .PhysicalDevice = vulkan.gpu,
-        .Device = vulkan.device,
-        .Queue = vulkan.graphicsQueue,
-        .DescriptorPool = imguiDescriptorPool,
-        .MinImageCount = 2,
-        .ImageCount = static_cast<uint32_t>(swapchain.images.size()),
-        .PipelineInfoMain = { .MSAASamples = VK_SAMPLE_COUNT_1_BIT, .PipelineRenderingCreateInfo = renderInfo },
-        .UseDynamicRendering = true
-    };
-
-    ImGui_ImplVulkan_Init(&initInfo);
-
-    ImGuiIO& io = ImGui::GetIO();
-    io.Fonts->AddFontDefault();
-    float baseFontSize = 13.0f; // 13.0f is the size of the default font. Change to the font size you use.
-    float iconFontSize = baseFontSize * 2.0f / 3.0f; // FontAwesome fonts need to have their sizes reduced by 2.0f/3.0f in order to align correctly
-
-    // merge in icons from Font Awesome
-    static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
-    ImFontConfig icons_config;
-    icons_config.MergeMode = true;
-    icons_config.PixelSnapH = true;
-    icons_config.GlyphMinAdvanceX = iconFontSize;
-    io.Fonts->AddFontFromFileTTF("res/fonts/" FONT_ICON_FILE_NAME_FA, iconFontSize, &icons_config, icons_ranges);
+void Engine::createUI()
+{
+    ui.init(vulkan.instance, vulkan.device, vulkan.gpu, vulkan.graphicsQueue, window, swapchain.imageFormat, swapchain.images.size());
+    ui.resize(windowSize.width, windowSize.height);
 }
 
 bool Engine::prepareFrame(Frame &frame)

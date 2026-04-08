@@ -1,7 +1,9 @@
 #include "vk_ui.hpp"
+#include "vk_utils.hpp"
 
 #include "imgui.h"
-
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_vulkan.h"
 #include "IconsFontAwesome4.h"
 
 #include <iostream>
@@ -9,6 +11,21 @@
 #include <set>
 
 using namespace vke;
+
+template<class T>
+void drawResourcesUI(T &res, Scene &scene)
+{
+    std::vector<const char*> names;
+    static int currentIndex = 0;
+
+    for (auto &pair : res.itemsMap)
+        names.push_back(pair.first.c_str());
+
+    ImGui::ListBox("Models", &currentIndex, names.data(), names.size());
+
+    auto &item = res.get(names[currentIndex]);
+    drawUI(item, scene);
+}
 
 void vke::drawUI(Scene &scene)
 {
@@ -18,20 +35,23 @@ void vke::drawUI(Scene &scene)
             if (ImGui::Button(ICON_FA_FOLDER " Load Model"))
                 ImGui::OpenPopup("Select File:");
             std::string modelPath;
-            if (ImGui::SelectFile("", modelPath, false, { ".obj", ".gltf", ".glb" })) {
+            if (ImGui::SelectFile("", modelPath, { ".obj", ".gltf", ".glb" })) {
                 std::cout << "Selected Model: " << modelPath << std::endl;
                 scene.storeModel(scene.loadModel(modelPath));
             }
+
+            drawResourcesUI(scene.models, scene);
+
             ImGui::EndTabItem();
         }
 
         if (ImGui::BeginTabItem("Textures")) {
-            //DrawTextures(scene);
+            drawResourcesUI(scene.textures, scene);
             ImGui::EndTabItem();
         }
 
         if (ImGui::BeginTabItem("Materials")) {
-            //DrawMaterials(scene);
+            drawResourcesUI(scene.pbrMaterials, scene);
             ImGui::EndTabItem();
         }
 
@@ -41,7 +61,7 @@ void vke::drawUI(Scene &scene)
         }
 
         if (ImGui::BeginTabItem("Camera")) {
-            //ImGui::DrawCamera(scene->camera);
+            drawUI(scene.camera);
             ImGui::EndTabItem();
         }
 
@@ -119,7 +139,12 @@ void vke::drawUI(Model &model, Scene &scene)
     // TODO: node transforms
 }
 
-void drawUI(Camera &camera)
+void vke::drawUI(Texture &texture, Scene &scene)
+{
+
+}
+
+void vke::drawUI(Camera &camera)
 {
     ImGui::SliderFloat("Speed", &camera.movementSpeed, 0, 100);
     ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0, 1);
@@ -152,8 +177,7 @@ bool ImGui::InputMat4(const char *id, glm::mat4 &mat)
     return (bool)modified;
 }
 
-bool ImGui::SelectFile(const std::string &initialPath, std::string &selectedFile,
-    bool showHidden, const std::vector<std::string> &filters)
+bool ImGui::SelectFile(const std::string &initialPath, std::string &selectedFile, const std::vector<std::string> &filters)
 {
     namespace fs = std::filesystem;
 
@@ -174,11 +198,9 @@ bool ImGui::SelectFile(const std::string &initialPath, std::string &selectedFile
         std::set<std::string> orderedFiles;
 
         for (const auto &entry : fs::directory_iterator(currentPath)) {
-            if (!showHidden) {
-                std::string filename = entry.path().filename().c_str();
-                if (filename[0] == '.')
-                    continue;
-            }
+            std::string filename = entry.path().filename().c_str();
+            if (filename[0] == '.')
+                continue;
 
             if (fs::is_directory(entry)) {
                 orderedFolders.insert(entry.path().filename());
@@ -233,7 +255,114 @@ bool ImGui::SelectFile(const std::string &initialPath, std::string &selectedFile
     return false;
 }
 
-bool ImGui::SelectFolder(const std::string &initialPath, std::string &selected, bool showHidden)
+void UI::init(VkInstance instance, VkDevice device, VkPhysicalDevice gpu, VkQueue queue, SDL_Window *window, VkFormat imageFormat, uint32_t imageCount)
 {
+    this->device = device;
 
+    std::vector<VkDescriptorPoolSize> poolSizes = {
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE },
+    };
+
+    uint32_t maxSets = 0;
+    for (VkDescriptorPoolSize& poolSize : poolSizes)
+        maxSets += poolSize.descriptorCount;
+
+    VkDescriptorPoolCreateInfo poolInfo{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = maxSets,
+        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+        .pPoolSizes = poolSizes.data()
+    };
+
+    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &imguiDescriptorPool));
+
+    ImGui::CreateContext();
+    ImGui_ImplSDL2_InitForVulkan(window);
+
+    //dynamic rendering parameters
+    VkPipelineRenderingCreateInfo renderInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &imageFormat,
+    };
+
+    ImGui_ImplVulkan_InitInfo initInfo{
+        .Instance = instance,
+        .PhysicalDevice = gpu,
+        .Device = device,
+        .Queue = queue,
+        .DescriptorPool = imguiDescriptorPool,
+        .MinImageCount = 2,
+        .ImageCount = imageCount,
+        .PipelineInfoMain = { .MSAASamples = VK_SAMPLE_COUNT_1_BIT, .PipelineRenderingCreateInfo = renderInfo },
+        .UseDynamicRendering = true
+    };
+
+    ImGui_ImplVulkan_Init(&initInfo);
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->AddFontDefault();
+    float baseFontSize = 13.0f; // 13.0f is the size of the default font. Change to the font size you use.
+    float iconFontSize = baseFontSize * 2.0f / 3.0f; // FontAwesome fonts need to have their sizes reduced by 2.0f/3.0f in order to align correctly
+
+    // merge in icons from Font Awesome
+    static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+    ImFontConfig icons_config;
+    icons_config.MergeMode = true;
+    icons_config.PixelSnapH = true;
+    icons_config.GlyphMinAdvanceX = iconFontSize;
+    io.Fonts->AddFontFromFileTTF("res/fonts/" FONT_ICON_FILE_NAME_FA, iconFontSize, &icons_config, icons_ranges);
+}
+
+void UI::resize(uint32_t width, uint32_t height)
+{
+    this->targetImageExtent = { width, height };
+}
+
+void UI::cleanup()
+{
+    ImGui_ImplVulkan_Shutdown();
+    vkDestroyDescriptorPool(device, imguiDescriptorPool, nullptr);
+}
+
+void UI::update(std::function<void ()> drawCommands)
+{
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+
+    drawCommands();
+
+    ImGui::Render();
+}
+
+void UI::render(VkCommandBuffer cmd, VkImageView targetImageView)
+{
+    VkRenderingAttachmentInfo colorAttachmentInfo{
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = targetImageView,
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+        //.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, //VK_ATTACHMENT_STORE_OP_STORE,
+    };
+
+    VkRenderingInfo renderInfo{
+        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea = { .extent = targetImageExtent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachmentInfo
+    };
+
+    vkCmdBeginRendering(cmd, &renderInfo);
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+
+    vkCmdEndRendering(cmd);
+}
+
+void UI::processEvent(SDL_Event &e)
+{
+    ImGui_ImplSDL2_ProcessEvent(&e);
 }

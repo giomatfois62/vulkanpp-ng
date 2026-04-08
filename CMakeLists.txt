@@ -36,7 +36,8 @@ set(IMGUI_SRC
     ${IMGUI_DIR}/imgui_stdlib.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
     ${IMGUI_DIR}/imgui_widgets.cpp)
-add_library(imgui STATIC ${IMGUI_SRC})
+add_library(imgui STATIC ${IMGUI_SRC}
+    src/vk_renderer.hpp src/vk_renderer.cpp)
 
 # ktx library
 set(KTX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/ktx)
@@ -64,6 +65,7 @@ ${SRC_DIR}/vk_image.cpp
 ${SRC_DIR}/vk_light.cpp
 ${SRC_DIR}/vk_mesh.cpp
 ${SRC_DIR}/vk_pipeline.cpp
+${SRC_DIR}/vk_renderer.cpp
 ${SRC_DIR}/vk_scene.cpp
 ${SRC_DIR}/vk_thread.cpp
 ${SRC_DIR}/vk_ui.cpp

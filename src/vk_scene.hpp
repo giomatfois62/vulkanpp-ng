@@ -20,6 +20,8 @@ struct Resources {
 
     void setDefault(const T& item) { items[0] = item; }
 
+    T& get(const std::string &name) { return items[itemsMap[name]]; }
+
     size_t insert(const T& item, const std::string &name)
     {
         size_t id;
@@ -79,7 +81,6 @@ class Scene
 {
 public:
     void init(VkDevice device, uint32_t queueFamilyIndex, VmaAllocator allocator);
-    void createBindlessDescriptors();
     void cleanup();
 
     Texture createTexture(const TextureData &data);
@@ -114,6 +115,8 @@ public:
     VkDescriptorSet bindlessDescriptorSet;
 
 protected:
+    void createBindlessDescriptors();
+
     VkDevice device;
     VkQueue queue;
     VmaAllocator allocator;

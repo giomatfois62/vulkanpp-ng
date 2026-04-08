@@ -22,7 +22,7 @@ Application::Application(int argc, char **argv) :
 	Engine(argc, argv)
 {
     //clearValue.color = { {0.03f, 0.03f, 0.03f, 1.0f} };
-    clearValue.color = { {0.00f, 0.00f, 0.00f, 1.0f} };
+    renderer.clearValue.color = { {0.00f, 0.00f, 0.00f, 1.0f} };
 
     camera = Camera(glm::vec3(0.0f, 1.0f, 3.0f));
     //camera = Camera(glm::vec3(0.0f, 1.0f, 155.0f));
@@ -60,66 +60,14 @@ void Application::onResize(int, int)
 void Application::draw(VkCommandBuffer cmd)
 {
     // Update shader data
-    sceneData.projection = camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 1000.0f);
+    auto extent = renderer.drawExtent();
+
+    sceneData.projection = camera.projection((float)extent.width / (float)extent.height, 0.1f, 1000.0f);
     sceneData.view = camera.view();
     sceneData.viewPos = { camera.position, 1.0f };
     sceneDataBuffers.update(currentFrameIndex, &sceneData, sizeof(sceneData));
     materialBuffers.update(currentFrameIndex, scene.materials.data(), scene.materials.dataSize());
     pbrMaterialBuffers.update(currentFrameIndex, scene.pbrMaterials.data(), scene.pbrMaterials.dataSize());
-
-    // begin dynamic rendering
-
-    /*
-    VkRenderingAttachmentInfo colorAttachmentInfo{
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView = msaaEnabled() ? colorImage.view : swapchain.imageViews[currentImageIndex],
-        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .resolveMode = msaaEnabled() ? VK_RESOLVE_MODE_AVERAGE_BIT : VK_RESOLVE_MODE_NONE,
-        .resolveImageView = msaaEnabled() ? swapchain.imageViews[currentImageIndex] : VK_NULL_HANDLE,
-        .resolveImageLayout = msaaEnabled() ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, //VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue = clearValue
-    };*/
-
-    VkRenderingAttachmentInfo colorAttachmentInfo{
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView = msaaEnabled() ? colorImage.view : drawImage.view,
-        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .resolveMode = msaaEnabled() ? VK_RESOLVE_MODE_AVERAGE_BIT : VK_RESOLVE_MODE_NONE,
-        .resolveImageView = msaaEnabled() ? drawImage.view : VK_NULL_HANDLE,
-        .resolveImageLayout = msaaEnabled() ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        // on nvidia ".storeOp = OP_DONT_CARE" doesn't work without MSAA
-        .storeOp = msaaEnabled() ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue = clearValue
-    };
-
-    VkRenderingAttachmentInfo depthAttachmentInfo{
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView = depthImage.view,
-        .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        .clearValue = VkClearValue{ .depthStencil{ 1.0f, 0 } }
-    };
-
-    auto extent = drawExtent();
-
-    // set pipeline dynamic states
-    setViewport(cmd, 0.0f, extent.height, extent.width, extent.height);
-    setScissor(cmd, 0, 0, extent.width, extent.height);
-
-    VkRenderingInfo renderInfo{
-        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea = { .extent = extent },
-        .layerCount = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &colorAttachmentInfo,
-        .pDepthAttachment = &depthAttachmentInfo
-    };
-
-    vkCmdBeginRendering(cmd, &renderInfo);
 
     // bind once for all draw commands
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &scene.bindlessDescriptorSet, 0, nullptr);
@@ -139,27 +87,6 @@ void Application::draw(VkCommandBuffer cmd)
     sphere.draw(cmd, lightInstances, currentFrameIndex, pipelineLayout, offsetof(BindlessPushConstants,instances));
 
     vkCmdEndRendering(cmd);
-
-    changeImageLayout(cmd, drawImage.handle,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
-    );
-
-    changeImageLayout(cmd, swapchain.images[currentImageIndex],
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // if rendering offscreen
-        //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // if rendering or resolving directly on it
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
-    );
-
-    copyImageToImage(cmd, drawImage.handle, swapchain.images[currentImageIndex], extent, swapchain.extent, VK_FILTER_LINEAR);
-
-    changeImageLayout(cmd, swapchain.images[currentImageIndex],
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
-    );
 }
 
 void Application::drawUI()
@@ -170,9 +97,6 @@ void Application::drawUI()
 
     vke::drawUI(scene);
 
-    ImGui::Text("ImGui Events Time: %lf micro", benchmarks.imguiEventsTime);
-    ImGui::Text("App Events Time: %lf micro", benchmarks.appEventsTime);
-    ImGui::Text("Rendering Time: %f milli", lagInMillisecs);
     ImGui::Text("Rendering Time (ImGui): %f milli", 1000.0f / ImGui::GetIO().Framerate);
 
     ImGui::Text("Time to build clusters: %lf micro", timeToBuildClusters);
@@ -202,17 +126,19 @@ void Application::drawUI()
             samples = VK_SAMPLE_COUNT_16_BIT; break;
         }
 
-        MSAASamples = samples;
-        recreateSwapchain();
-        cleanupPipelines();
-        createPipelines();
-    }
-    float currentScale = renderScale;
-    ImGui::SliderFloat("Render Scale: ", &renderScale, 0.1f, 1.0f);
-    if (currentScale != renderScale) {
         waitIdle();
-            cleanupRenderingResources();
-            createRenderingResources();
+            renderer.setMSAASamples(samples);
+            cleanupPipelines();
+            createPipelines();
+        waitIdle();
+    }
+
+    float currentScale = renderer.renderScale;
+    ImGui::SliderFloat("Render Scale: ", &renderer.renderScale, 0.1f, 1.0f);
+    if (currentScale != renderer.renderScale) {
+        waitIdle();
+            renderer.cleanup();
+            renderer.createResources();
         waitIdle();
     }
 
@@ -232,32 +158,6 @@ void Application::drawUI()
         materialsStr[i] = name.c_str();
         materials[i] = materialsStr[i].c_str();
     }
-
-    /*
-    static int selectedMaterial = model.meshes[0].material;
-    ImGui::Combo("Material", &selectedMaterial, materials.data(), materials.size());
-    ImGui::ColorEdit3("Diffuse:", &scene.materials.items[selectedMaterial].diffuse[0]);
-    ImGui::ColorEdit3("Specular:", &scene.materials.items[selectedMaterial].specular[0]);
-    ImGui::SliderFloat("Shininess:", &scene.materials.items[selectedMaterial].shininess, 1, 512);
-
-    static bool useNormalMap = true;
-    if (ImGui::Checkbox("Normal Map:", &useNormalMap)) {
-        if (useNormalMap) {
-            scene.materials.items = backupMaterials;
-        } else {
-            for (auto &material : scene.materials.items) {
-                material.bumpTex = 0;
-            }
-        }
-    }
-
-    if (ImGui::Button("Assign")) {
-        for (auto &mesh : model.meshes) {
-            for (auto &inst : mesh.drawData)
-                inst.material = selectedMaterial;
-        }
-    }
-    ImGui::Separator();*/
 
     ImGui::SliderFloat3("DirLight Direction:", &lights[0].direction[0], -1, 1);
     ImGui::ColorEdit3("DirLight Ambient:", &lights[0].ambient[0]);
@@ -394,8 +294,8 @@ void Application::createPipelines()
         .setDynamicStates(dynamicStates)
         .enableDepthTesting(VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorAttachmentFormat(swapchain.imageFormat)
-        .setDepthAttachmentFormat(depthImage.info.format)
-        .setMSAASamples(MSAASamples)
+        .setDepthAttachmentFormat(renderer.depthImage.info.format)
+        .setMSAASamples(renderer.MSAASamples)
         .disableBlending()
         .build(vulkan.device, {});
 
@@ -417,8 +317,8 @@ void Application::createPipelines()
             .setDynamicStates(dynamicStates)
             .enableDepthTesting(VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL)
             .setColorAttachmentFormat(swapchain.imageFormat)
-            .setDepthAttachmentFormat(depthImage.info.format)
-            .setMSAASamples(MSAASamples)
+            .setDepthAttachmentFormat(renderer.depthImage.info.format)
+            .setMSAASamples(renderer.MSAASamples)
             .disableBlending()
             .build(vulkan.device, {});
 
@@ -456,8 +356,8 @@ void Application::createPBRPipeline()
         .setDynamicStates(dynamicStates)
         .enableDepthTesting(VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorAttachmentFormat(swapchain.imageFormat)
-        .setDepthAttachmentFormat(depthImage.info.format)
-        .setMSAASamples(MSAASamples)
+        .setDepthAttachmentFormat(renderer.depthImage.info.format)
+        .setMSAASamples(renderer.MSAASamples)
         .disableBlending()
         .build(vulkan.device, {});
 
@@ -573,6 +473,7 @@ void Application::loadTestScene()
     //model = loadGLTF("res/objects/gltf/voyager.gltf");
     //objScale = 0.1f;
     //model = loadGLTF("res/objects/gltf/voyager.gltf");
+    //model = scene.loadGLTF("res/objects/gltf/sphere.gltf");
     model = scene.loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/sponza/sponza.gltf");
     //model = scene.loadGLTF("/home/crescoadmin/Projects/glTF-Sample-Assets/Models/CarbonFibre/glTF/CarbonFibre.gltf");
     //model = scene.loadGLTF("/home/crescoadmin/Projects/Vulkan-Tutorial/attachments/simple_engine/Assets/bistro/bistro.gltf");
@@ -592,6 +493,7 @@ void Application::loadTestScene()
     }
 
     scene.materials.items[0].normalTex = scene.loadTexture("res/textures/brickwall_normal.jpg", VK_FORMAT_R8G8B8A8_UNORM);
+    scene.pbrMaterials.items[0].normalTex = scene.materials.items[0].normalTex;
     scene.materials.items[0].diffuseTex = scene.loadTexture("res/textures/brickwall.jpg");
 }
 
@@ -741,7 +643,8 @@ void Application::updatePlanetScene(float dt)
     }
 
     if (doCulling) {
-        Frustum frustum(camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 1000.0f) * camera.view());
+        auto extent = renderer.drawExtent();
+        Frustum frustum(camera.projection((float)extent.width / (float)extent.height, 0.1f, 1000.0f) * camera.view());
 
         timeToCullInstances = measureExecution<chrono::microseconds>([&]{
             cullInstances(rockInstances, frustum);
@@ -773,10 +676,12 @@ void Application::updateLights(float dt)
             lightInstances[i].transform = glm::translate(glm::mat4(1.0f), glm::vec3(lights[i].position));
     }
 
+    auto extent = renderer.drawExtent();
+
     // Update light clusters
     timeToBuildClusters = measureExecution<std::chrono::microseconds>([&]{
-        auto proj = camera.projection((float)drawExtent().width / (float)drawExtent().height, 0.1f, 100.0f);
-        lightClusters = buildLightClusters(0.1f, 100.0f, { 16, 9, 24 }, { drawExtent().width, drawExtent().height }, glm::inverse(proj));
+        auto proj = camera.projection((float)extent.width / (float)extent.height, 0.1f, 100.0f);
+        lightClusters = buildLightClusters(0.1f, 100.0f, { 16, 9, 24 }, { extent.width, extent.height }, glm::inverse(proj));
     });
 
     timeToAssignLights = measureExecution<std::chrono::microseconds>([&]{

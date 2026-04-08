@@ -60,9 +60,9 @@ struct Vertex {
 
 struct Mesh {
     uint32_t firstIndex = 0;
-    uint32_t indexCount;
+    uint32_t indexCount = 0;
     uint32_t firstVertex = 0;
-    uint32_t vertexCount;
+    uint32_t vertexCount = 0;
     std::vector<uint32_t> materials = { 0 };
     vke::Volume volume;
     bool hasTangents = false;
