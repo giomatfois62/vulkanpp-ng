@@ -84,7 +84,7 @@ Buffer vke::createIndirectBuffer(size_t size, VmaAllocator allocator)
     VkBufferCreateInfo bufferInfo{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = size,
-        .usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        .usage = VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
     };
 
     VmaAllocationCreateInfo allocInfo{
