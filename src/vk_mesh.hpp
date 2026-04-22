@@ -88,11 +88,16 @@ struct InstanceData {
     glm::mat4 transform;
 };
 
+struct Drawable {
+    uint32_t modelIndex = 0;
+    InstanceData instance;
+};
+
 struct Model {
     void upload(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices,
         uint32_t framesInFlight, VkDevice device, VmaAllocator allocator);
     void draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances,
-        uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset, bool multiDraw = true);
+        uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset);
     void updateInstances(const std::vector<InstanceData> &instances, uint32_t frameIndex);
     void bind(VkCommandBuffer cmd);
     void cleanup();
@@ -104,6 +109,7 @@ struct Model {
     size_t indexCount;
     vke::Volume volume;
     std::string name;
+    std::vector<InstanceData> instances;
     vke::SSBOs instanceBuffer;
     std::vector<VkDrawIndexedIndirectCommand> indirectDrawCommands;
     vke::IndirectBuffers drawCommandsBuffer;

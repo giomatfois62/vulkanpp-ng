@@ -157,8 +157,11 @@ void Model::computeVolume()
 }
 
 void Model::draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances,
-    uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset, bool multiDraw)
+    uint32_t frameIndex, VkPipelineLayout pipelineLayout, uint32_t pushConstantOffset)
 {
+    if (!instances.size())
+        return;
+
     updateInstances(instances, frameIndex);
 
     bind(cmd);
@@ -166,16 +169,15 @@ void Model::draw(VkCommandBuffer cmd, const std::vector<InstanceData> &instances
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, pushConstantOffset,
         sizeof(VkDeviceAddress), &instanceBuffer.deviceAddress(frameIndex));
 
-    if (multiDraw) {
+    vkCmdDrawIndexedIndirect(cmd, drawCommandsBuffer.buffer(frameIndex),
+        0, indirectDrawCommands.size(), sizeof(VkDrawIndexedIndirectCommand));
+
+    // multiple draw calls
+    /*
+    for (size_t i = 0; i < indirectDrawCommands.size(); ++i) {
         vkCmdDrawIndexedIndirect(cmd, drawCommandsBuffer.buffer(frameIndex),
-            0, indirectDrawCommands.size(), sizeof(VkDrawIndexedIndirectCommand));
-    } else {
-        // multiple draw calls
-        for (size_t i = 0; i < indirectDrawCommands.size(); ++i) {
-            vkCmdDrawIndexedIndirect(cmd, drawCommandsBuffer.buffer(frameIndex),
-                i * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-        }
-    }
+            i * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
+    }*/
 
     // without draw indirect
     /*
