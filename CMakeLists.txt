@@ -67,6 +67,7 @@ ${SRC_DIR}/vk_mesh.cpp
 ${SRC_DIR}/vk_pipeline.cpp
 ${SRC_DIR}/vk_renderer.cpp
 ${SRC_DIR}/vk_scene.cpp
+${SRC_DIR}/vk_swapchain.cpp
 ${SRC_DIR}/vk_thread.cpp
 ${SRC_DIR}/vk_ui.cpp
 ${SRC_DIR}/vk_utils.cpp
