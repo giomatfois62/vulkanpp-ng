@@ -13,24 +13,17 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include <iostream>
-
 using namespace std;
 using namespace vke;
 
 Application::Application(int argc, char **argv) :
 	Engine(argc, argv)
 {
-    //clearValue.color = { {0.03f, 0.03f, 0.03f, 1.0f} };
-    renderer.clearValue.color = { {0.00f, 0.00f, 0.00f, 1.0f} };
-
-    camera = Camera(glm::vec3(0.0f, 1.0f, 3.0f));
-    //camera = Camera(glm::vec3(0.0f, 1.0f, 155.0f));
-
-    octree = Octree(Volume({-10,-10,-10},{10,10,10}), 16, 8);
-
-    ///MSAASamples = VK_SAMPLE_COUNT_8_BIT;
     swapchain.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+    renderer.clearValue.color = { {0.03f, 0.03f, 0.03f, 1.0f} };
+    renderer.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    //scene.camera = Camera(glm::vec3(0.0f, 1.0f, 3.0f));
+    //octree = Octree(Volume({-10,-10,-10},{10,10,10}), 16, 8);
 }
 
 Application::~Application()
@@ -43,13 +36,14 @@ void Application::onInit()
     SDL_SetRelativeMouseMode((SDL_bool)!paused);
 
     createPipelines();
-    loadAssets();
+    createTestScene();
+    //createPlanetScene();
+    createLights();
 }
 
 void Application::onCleanup()
 {
-	cleanupPipelines();
-    cleanupAssets();
+    cleanupPipelines();
 }
 
 void Application::onResize(int, int)
@@ -59,61 +53,55 @@ void Application::onResize(int, int)
 
 void Application::draw(VkCommandBuffer cmd)
 {
-    // Update shader data
     auto extent = renderer.drawExtent();
+    scene.camera.aspectRatio = (float)extent.width / (float)extent.height;
 
-    sceneData.projection = camera.projection((float)extent.width / (float)extent.height, 0.1f, 1000.0f);
-    sceneData.view = camera.view();
-    sceneData.viewPos = { camera.position, 1.0f };
-    sceneDataBuffers.update(currentFrameIndex, &sceneData, sizeof(sceneData));
-    materialBuffers.update(currentFrameIndex, scene.materials.data(), scene.materials.dataSize());
-    pbrMaterialBuffers.update(currentFrameIndex, scene.pbrMaterials.data(), scene.pbrMaterials.dataSize());
+    // Update shader data
+    scene.updateUniforms(cmd, pipelineLayout, currentFrameIndex);
 
     // bind once for all draw commands
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &scene.bindlessDescriptorSet, 0, nullptr);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pbrPipeline);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, useClustered ? clusteredPbrPipeline : pbrPipeline);
     //vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,camera), sizeof(VkDeviceAddress), &sceneDataBuffers.deviceAddress(currentFrameIndex));
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,materials), sizeof(VkDeviceAddress), &pbrMaterialBuffers.deviceAddress(currentFrameIndex));
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,lights), sizeof(VkDeviceAddress), &lightDataBuffers.deviceAddress(currentFrameIndex));
+    for (auto &model : scene.models.items) {
+        model.draw(cmd, model.instances, currentFrameIndex, pipelineLayout, offsetof(BindlessPushConstants,instances));
+    }
 
-    drawTestScene(cmd, pipelineLayout);
-    //drawPlanetScene(cmd, pipelineLayout);
+    if (showLights) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightsPipeline);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightsPipeline);
+        std::vector<vke::InstanceData> lightInstances;
 
-    sphere.draw(cmd, lightInstances, currentFrameIndex, pipelineLayout, offsetof(BindlessPushConstants,instances));
+        for (auto &light :  scene.lights) {
+            float radius = light.radius;
+            glm::mat4 t(1.0f);
+            t = glm::translate(t, glm::vec3(light.position));
+            t = glm::scale(t, glm::vec3(radius));
+            lightInstances.push_back({
+                .transform = light.type == LightType::Point ? t : glm::mat4(0.0f)
+            });
+        }
 
-    vkCmdEndRendering(cmd);
+        auto &sphere = scene.models.get("sphere");
+        sphere.draw(cmd, lightInstances, currentFrameIndex, pipelineLayout, offsetof(BindlessPushConstants,instances));
+    }
 }
 
 void Application::drawUI()
 {
-    ImGui::ShowDemoWindow();
     if (!paused)
         return;
 
-    vke::drawUI(scene);
-
-    ImGui::Text("Rendering Time (ImGui): %f milli", 1000.0f / ImGui::GetIO().Framerate);
-
-    ImGui::Text("Time to build clusters: %lf micro", timeToBuildClusters);
-    ImGui::Text("Time to assign lights: %lf micro", timeToAssignLights);
-    ImGui::Text("Time to cull instances: %lf micro", timeToCullInstances);
-    ImGui::Text("Culled instances: %ld", culledInstances);
-    ImGui::Checkbox("Cull instances:", &doCulling);
-    ImGui::Checkbox("Multi Draw:", &multiDraw);
-    if (ImGui::Button("Pause Simulation"))
-        pauseSimulation = !pauseSimulation;
+    ImGui::Text("Frame time: %f milli", 1000.0f / ImGui::GetIO().Framerate);
 
     const char* availableSamples[] = { "Disabled", "MSAA 2x", "MSAA 4x", "MSAA 8x", "MSAA 16x" };
-    static int current = 0;
+    static int currentSampleCount = 0;
     VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
 
-    if (ImGui::Combo("MSAA", &current, availableSamples, IM_COUNTOF(availableSamples))) {
-        switch (current) {
+    if (ImGui::Combo("MSAA", &currentSampleCount, availableSamples, IM_COUNTOF(availableSamples))) {
+        switch (currentSampleCount) {
             case 0:
             samples = VK_SAMPLE_COUNT_1_BIT; break;
             case 1:
@@ -135,6 +123,25 @@ void Application::drawUI()
 
     float currentScale = renderer.renderScale;
     ImGui::SliderFloat("Render Scale: ", &renderer.renderScale, 0.1f, 1.0f);
+
+    static float radius = 4.0f;
+    static float intensity = 10.0f;
+    static int _clusterGridSize[3];
+    for (int i = 0; i < 3; ++i)
+        _clusterGridSize[i] = clusterGridSize[i];
+    ImGui::SliderInt3("Cluster Grid Size:", &_clusterGridSize[0], 1, 30);
+    for (int i = 0; i < 3; ++i)
+        clusterGridSize[i] = _clusterGridSize[i];
+    ImGui::SliderFloat("Light Radius:", &radius, 0.1f, 20.0f);
+    ImGui::SliderFloat("Light Intensity: ", &intensity, 0.1f, 50.0f);
+    for (auto &light : scene.lights) {
+        light.radius = radius;
+        light.intensity = intensity;
+    }
+    ImGui::Checkbox("Clustered Shading:", &useClustered);
+    ImGui::Checkbox("Show Clusters:", &showClusters);
+    ImGui::Checkbox("Show Lights:", &showLights);
+
     if (currentScale != renderer.renderScale) {
         waitIdle();
             renderer.cleanup();
@@ -142,46 +149,16 @@ void Application::drawUI()
         waitIdle();
     }
 
-    ImGui::SliderFloat4("Light", &sceneData.light[0], -10, 10);
-    ImGui::SliderFloat3("Model Position", &objPosition[0], -10, 10);
-    ImGui::SliderFloat3("Model Rotation", &objRotation[0], -10, 10);
-    ImGui::SliderFloat("Model Scale", &objScale, 0, 3);
-    ImGui::Separator();
-    ImGui::SliderFloat("Speed", &camera.movementSpeed, 0, 100);
-    ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0, 1);
-    ImGui::Separator();
-
-    std::vector<std::string> materialsStr(scene.materials.items.size());
-    std::vector<const char*> materials(scene.materials.items.size());
-    for (size_t i = 0; i < materialsStr.size(); ++i) {
-        std::string name = "Material_" + to_string(i);
-        materialsStr[i] = name.c_str();
-        materials[i] = materialsStr[i].c_str();
+    if (ImGui::SliderInt("Lights: ", &lightsCount, 1, 500)) {
+        waitIdle();
+        createLights();
+        updateLights();
+        waitIdle();
     }
 
-    ImGui::SliderFloat3("DirLight Direction:", &lights[0].direction[0], -1, 1);
-    ImGui::ColorEdit3("DirLight Ambient:", &lights[0].ambient[0]);
-    ImGui::ColorEdit3("DirLight Diffuse:", &lights[0].diffuse[0]);
-    ImGui::ColorEdit3("DirLight Specular:", &lights[0].specular[0]);
     ImGui::Separator();
 
-    ImGui::SliderFloat3("PointLight Position:", &lights[1].position[0], -5, 5);
-    ImGui::ColorEdit3("PointLight Ambient:", &lights[1].ambient[0]);
-    ImGui::ColorEdit3("PointLight Diffuse:", &lights[1].diffuse[0]);
-    ImGui::ColorEdit3("PointLight Specular:", &lights[1].specular[0]);
-    ImGui::SliderFloat("PointLight Constant:", &lights[1].constant, 0, 1);
-    ImGui::SliderFloat("PointLight Linear:", &lights[1].linear, 0, 1);
-    ImGui::SliderFloat("PointLight Quadratic:", &lights[1].quadratic, 0, 1);
-    ImGui::Separator();
-
-    ImGui::ColorEdit3("SpotLight Ambient:", &lights[2].ambient[0]);
-    ImGui::ColorEdit3("SpotLight Diffuse:", &lights[2].diffuse[0]);
-    ImGui::ColorEdit3("SpotLight Specular:", &lights[2].specular[0]);
-    ImGui::SliderFloat("SpotLight Constant:", &lights[2].constant, 0, 1);
-    ImGui::SliderFloat("SpotLight Linear:", &lights[2].linear, 0, 1);
-    ImGui::SliderFloat("SpotLight Quadratic:", &lights[2].quadratic, 0, 1);
-    ImGui::SliderFloat("SpotLight CutOff:", &lights[2].cutOff, 0, 1);
-    ImGui::SliderFloat("SpotLight OuterCutOff:", &lights[2].outerCutOff, 0, 1);
+    vke::drawUI(scene);
 }
 
 void Application::update(float dt)
@@ -189,17 +166,16 @@ void Application::update(float dt)
     if (!paused) {
         const Uint8 *keyState = SDL_GetKeyboardState(nullptr);
 
-        if (keyState[SDL_SCANCODE_A]) camera.processKeyboard(Camera::CameraMovement::LEFT, dt);
-        if (keyState[SDL_SCANCODE_D]) camera.processKeyboard(Camera::CameraMovement::RIGHT, dt);
-        if (keyState[SDL_SCANCODE_W]) camera.processKeyboard(Camera::CameraMovement::FORWARD, dt);
-        if (keyState[SDL_SCANCODE_S]) camera.processKeyboard(Camera::CameraMovement::BACKWARD, dt);
-        if (keyState[SDL_SCANCODE_X]) camera.processKeyboard(Camera::CameraMovement::UP, dt);
-        if (keyState[SDL_SCANCODE_Z]) camera.processKeyboard(Camera::CameraMovement::DOWN, dt);
+        if (keyState[SDL_SCANCODE_A]) scene.camera.processKeyboard(Camera::CameraMovement::LEFT, dt);
+        if (keyState[SDL_SCANCODE_D]) scene.camera.processKeyboard(Camera::CameraMovement::RIGHT, dt);
+        if (keyState[SDL_SCANCODE_W]) scene.camera.processKeyboard(Camera::CameraMovement::FORWARD, dt);
+        if (keyState[SDL_SCANCODE_S]) scene.camera.processKeyboard(Camera::CameraMovement::BACKWARD, dt);
+        if (keyState[SDL_SCANCODE_X]) scene.camera.processKeyboard(Camera::CameraMovement::UP, dt);
+        if (keyState[SDL_SCANCODE_Z]) scene.camera.processKeyboard(Camera::CameraMovement::DOWN, dt);
     }
 
-    updateTestScene(dt);
     //updatePlanetScene(dt);
-    updateLights(dt);
+    updateLights();
 }
 
 void Application::processEvent(const SDL_Event& e)
@@ -223,7 +199,7 @@ void Application::processEvent(const SDL_Event& e)
         return;
 
     if (e.type == SDL_MOUSEWHEEL) {
-        camera.processMouseWheel(e.wheel.y);
+        scene.camera.processMouseWheel(e.wheel.y);
     }
 
     if (e.type == SDL_MOUSEMOTION) {
@@ -242,7 +218,7 @@ void Application::processEvent(const SDL_Event& e)
         lastX = xpos;
         lastY = ypos;
 
-        camera.processMouseMovement(xoffset, yoffset, false);
+        scene.camera.processMouseMovement(xoffset, yoffset, false);
     }
 
     if (e.type == SDL_KEYDOWN) {
@@ -252,14 +228,13 @@ void Application::processEvent(const SDL_Event& e)
 
 void Application::createPipelines()
 {
-    VkShaderModule meshVertexShader = createShaderModule("res/shaders/mesh_ubo_world_lights.vert.spv", vulkan.device);
-    VkShaderModule coloredFragmentShader = createShaderModule("res/shaders/mesh_ubo_world_lights.frag.spv", vulkan.device);
-
-    if (meshVertexShader == VK_NULL_HANDLE)
-        cerr << "Error when building the mesh vertex shader module" << endl;
-
-    if (coloredFragmentShader == VK_NULL_HANDLE)
-        cerr << "Error when building the mesh fragment shader module" << endl;
+    // load shader modules
+    VkShaderModule vertexShader = createShaderModule("res/shaders/mesh_ubo_world_lights.vert.spv", vulkan.device);
+    VkShaderModule lightsVertexShader = createShaderModule("res/shaders/lights.vert.spv", vulkan.device);
+    VkShaderModule mtlFragmentShader = createShaderModule("res/shaders/mesh_ubo_world_lights.frag.spv", vulkan.device);
+    VkShaderModule pbrFragmentShader = createShaderModule("res/shaders/mesh_ubo_world_lights_pbr.frag.spv", vulkan.device);
+    VkShaderModule clusteredPbrFragmentShader = createShaderModule("res/shaders/mesh_ubo_world_lights_pbr_clustered.frag.spv", vulkan.device);
+    VkShaderModule lightsFragmentShader = createShaderModule("res/shaders/lights.frag.spv", vulkan.device);
 
     // 128 bytes (guaranteed minimum size)
     VkPushConstantRange range {
@@ -283,10 +258,12 @@ void Application::createPipelines()
         VK_DYNAMIC_STATE_SCISSOR
     };
 
-    pipeline = PipelineBuilder()
+    PipelineBuilder pipelineBuilder;
+
+    mtlPipeline = pipelineBuilder
         .setLayout(pipelineLayout)
-        .addShaderStage(VK_SHADER_STAGE_VERTEX_BIT, meshVertexShader)
-        .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, coloredFragmentShader)
+        .addShaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertexShader)
+        .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, mtlFragmentShader)
         .setVertexDescription(Vertex::description())
         .setInputTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         //.setPolygonMode(VK_POLYGON_MODE_LINE)
@@ -299,212 +276,65 @@ void Application::createPipelines()
         .disableBlending()
         .build(vulkan.device, {});
 
-    // cleanup shader modules
-    vkDestroyShaderModule(vulkan.device, meshVertexShader, nullptr);
-    vkDestroyShaderModule(vulkan.device, coloredFragmentShader, nullptr);
+    pipelineBuilder.shaderStages.clear();
 
-    meshVertexShader = createShaderModule("res/shaders/lights.vert.spv", vulkan.device);
-    coloredFragmentShader = createShaderModule("res/shaders/lights.frag.spv", vulkan.device);
-
-    lightsPipeline = PipelineBuilder()
-            .setLayout(pipelineLayout)
-            .addShaderStage(VK_SHADER_STAGE_VERTEX_BIT, meshVertexShader)
-            .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, coloredFragmentShader)
-            .setVertexDescription(Vertex::description())
-            .setInputTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-            //.setPolygonMode(VK_POLYGON_MODE_LINE)
-            .setPolygonMode(VK_POLYGON_MODE_FILL)
-            .setDynamicStates(dynamicStates)
-            .enableDepthTesting(VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL)
-            .setColorAttachmentFormat(swapchain.imageFormat)
-            .setDepthAttachmentFormat(renderer.depthImage.info.format)
-            .setMSAASamples(renderer.MSAASamples)
-            .disableBlending()
-            .build(vulkan.device, {});
-
-    vkDestroyShaderModule(vulkan.device, meshVertexShader, nullptr);
-    vkDestroyShaderModule(vulkan.device, coloredFragmentShader, nullptr);
-
-    createPBRPipeline();
-    createOffscreenPipeline();
-}
-
-void Application::createPBRPipeline()
-{
-    VkShaderModule vertexShader = createShaderModule("res/shaders/mesh_ubo_world_lights.vert.spv", vulkan.device);
-    VkShaderModule fragmentShader = createShaderModule("res/shaders/mesh_ubo_world_lights_pbr.frag.spv", vulkan.device);
-
-    if (vertexShader == VK_NULL_HANDLE)
-        cerr << "Error when building the mesh vertex shader module" << endl;
-
-    if (fragmentShader == VK_NULL_HANDLE)
-        cerr << "Error when building the mesh fragment shader module" << endl;
-
-    std::vector<VkDynamicState> dynamicStates{
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR
-    };
-
-    pbrPipeline = PipelineBuilder()
-        .setLayout(pipelineLayout)
+    pbrPipeline = pipelineBuilder
         .addShaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertexShader)
-        .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentShader)
-        .setVertexDescription(Vertex::description())
-        .setInputTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        //.setPolygonMode(VK_POLYGON_MODE_LINE)
-        .setPolygonMode(VK_POLYGON_MODE_FILL)
-        .setDynamicStates(dynamicStates)
-        .enableDepthTesting(VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setColorAttachmentFormat(swapchain.imageFormat)
-        .setDepthAttachmentFormat(renderer.depthImage.info.format)
-        .setMSAASamples(renderer.MSAASamples)
-        .disableBlending()
+        .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, pbrFragmentShader)
+        .build(vulkan.device, {});
+
+    pipelineBuilder.shaderStages.clear();
+
+    clusteredPbrPipeline = pipelineBuilder
+        .addShaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertexShader)
+        .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, clusteredPbrFragmentShader)
+        .build(vulkan.device, {});
+
+    pipelineBuilder.shaderStages.clear();
+
+    lightsPipeline = pipelineBuilder
+        .addShaderStage(VK_SHADER_STAGE_VERTEX_BIT, lightsVertexShader)
+        .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, lightsFragmentShader)
+        .setPolygonMode(VK_POLYGON_MODE_LINE)
         .build(vulkan.device, {});
 
     // cleanup shader modules
     vkDestroyShaderModule(vulkan.device, vertexShader, nullptr);
-    vkDestroyShaderModule(vulkan.device, fragmentShader, nullptr);
-}
-
-void Application::createOffscreenPipeline()
-{
-    VkShaderModule meshVertexShader = createShaderModule("res/shaders/fullscreen_triangle.vert.spv", vulkan.device);
-    VkShaderModule coloredFragmentShader = createShaderModule("res/shaders/fullscreen_triangle.frag.spv", vulkan.device);
-
-    if (meshVertexShader == VK_NULL_HANDLE)
-        cerr << "Error when building the mesh vertex shader module" << endl;
-
-    if (coloredFragmentShader == VK_NULL_HANDLE)
-        cerr << "Error when building the mesh fragment shader module" << endl;
-
-    // 128 bytes (guaranteed minimum size)
-    VkPushConstantRange range {
-        .stageFlags = VK_SHADER_STAGE_ALL,
-        .offset = 0,
-        .size = sizeof(VkDeviceAddress) * 3
-    };
-
-    VkPipelineLayoutCreateInfo layoutCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &scene.bindlessDescriptorSetLayout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &range
-    };
-
-    VK_CHECK(vkCreatePipelineLayout(vulkan.device, &layoutCreateInfo, nullptr, &offscreenPipelineLayout));
-
-    std::vector<VkDynamicState> dynamicStates{
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR
-    };
-
-    offscreenPipeline = PipelineBuilder()
-        .setLayout(offscreenPipelineLayout)
-        .addShaderStage(VK_SHADER_STAGE_VERTEX_BIT, meshVertexShader)
-        .addShaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, coloredFragmentShader)
-        //.setVertexDescription(Vertex::description())
-        .setCullMode(VK_CULL_MODE_FRONT_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-        .setInputTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        //.setPolygonMode(VK_POLYGON_MODE_LINE)
-        .setPolygonMode(VK_POLYGON_MODE_FILL)
-        .setDynamicStates(dynamicStates)
-        //.enableDepthTesting(VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setColorAttachmentFormat(swapchain.imageFormat)
-        //.setDepthAttachmentFormat(depthImage.info.format)
-        .setMSAASamples(VK_SAMPLE_COUNT_1_BIT)
-        //.setMSAASamples(MSAASamples)
-        .disableBlending()
-        .build(vulkan.device, {});
-
-    // cleanup shader modules
-    vkDestroyShaderModule(vulkan.device, meshVertexShader, nullptr);
-    vkDestroyShaderModule(vulkan.device, coloredFragmentShader, nullptr);
+    vkDestroyShaderModule(vulkan.device, lightsVertexShader, nullptr);
+    vkDestroyShaderModule(vulkan.device, mtlFragmentShader, nullptr);
+    vkDestroyShaderModule(vulkan.device, pbrFragmentShader, nullptr);
+    vkDestroyShaderModule(vulkan.device, clusteredPbrFragmentShader, nullptr);
+    vkDestroyShaderModule(vulkan.device, lightsFragmentShader, nullptr);
 }
 
 void Application::cleanupPipelines()
 {
     vkDestroyPipeline(vulkan.device, lightsPipeline, nullptr);
     vkDestroyPipeline(vulkan.device, pbrPipeline, nullptr);
-    vkDestroyPipeline(vulkan.device, pipeline, nullptr);
+    vkDestroyPipeline(vulkan.device, clusteredPbrPipeline, nullptr);
+    vkDestroyPipeline(vulkan.device, mtlPipeline, nullptr);
     vkDestroyPipelineLayout(vulkan.device, pipelineLayout, nullptr);
-
-    vkDestroyPipeline(vulkan.device, offscreenPipeline, nullptr);
-    vkDestroyPipelineLayout(vulkan.device, offscreenPipelineLayout, nullptr);
 }
 
-void Application::loadAssets()
+void Application::createTestScene()
 {
-    loadTestScene();
-    //loadPlanetScene();
-    loadLights();
+    scene.camera = Camera(glm::vec3(0.0f, 2.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 0.0f, 0.0f);
+    scene.camera.nearPlane = 0.1f;
+    scene.camera.farPlane = 30.0f;
 
-    backupMaterials = scene.materials.items;
-    sceneDataBuffers.create(framesInFlight.size(), sizeof(sceneData), vulkan.device, vulkan.allocator);
-    materialBuffers.create(framesInFlight.size(), scene.materials.dataSize(), vulkan.device, vulkan.allocator);
-    pbrMaterialBuffers.create(framesInFlight.size(), scene.pbrMaterials.dataSize(), vulkan.device, vulkan.allocator);
+    auto sponza = scene.loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/sponza/sponza.gltf");
+    sponza.instances.push_back({ .transform = glm::mat4(1.0f) });
+    scene.storeModel(sponza);
 }
 
-void Application::cleanupAssets()
+void Application::createPlanetScene()
 {
-    model.cleanup();
-    sphere.cleanup();
-    planet.cleanup();
-    rock.cleanup();
+    scene.camera = Camera(glm::vec3(0.0f, 3.0f, 155.0f));
+    scene.camera.nearPlane = 0.01;
+    scene.camera.farPlane = 500.0f;
 
-    sceneDataBuffers.cleanup();
-    pbrMaterialBuffers.cleanup();
-    materialBuffers.cleanup();
-    lightDataBuffers.cleanup();
-}
-
-void Application::loadTestScene()
-{
-    //model = loadOBJ("res/objects/suzanne/suzanne.obj");
-    //model = loadOBJ("res/objects/planet/planet.obj");
-    //model = loadOBJ("res/objects/cyborg/cyborg.obj");
-    //model = loadOBJ("res/objects/backpack/backpack.obj");
-    //model = loadOBJ("res/objects/plant_on_table/plant_on_table.obj");
-    //model = loadOBJ("res/objects/nanosuit/nanosuit.obj");
-    //objPosition.y = -3.0f;
-    //objScale = 0.25;
-
-    //model = loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/FlightHelmet/glTF/FlightHelmet.gltf");
-    //model = loadGLTF("res/objects/gltf/voyager.gltf");
-    //objScale = 0.1f;
-    //model = loadGLTF("res/objects/gltf/voyager.gltf");
-    //model = scene.loadGLTF("res/objects/gltf/sphere.gltf");
-    model = scene.loadGLTF("/home/crescoadmin/Projects/Vulkan/assets/models/sponza/sponza.gltf");
-    //model = scene.loadGLTF("/home/crescoadmin/Projects/glTF-Sample-Assets/Models/CarbonFibre/glTF/CarbonFibre.gltf");
-    //model = scene.loadGLTF("/home/crescoadmin/Projects/Vulkan-Tutorial/attachments/simple_engine/Assets/bistro/bistro.gltf");
-    //objScale = 0.1;
-    //model = loadGLTF("res/objects/gltf/deer.gltf");
-    //model = loadGLTF("res/objects/gltf/torusknot.gltf");
-
-    //model = Model({ createCube() });
-    //objPosition.z = 10.0f;
-    //model = { .meshes = { createSphere(0.5, 36, 18) } };
-    //model = { .meshes = { createCylinder(0.5, 1, 32) } };
-    //model = { .meshes = { createTorus(1.0f, 0.5f, 36, 18) } };
-    //model = { .meshes = { createCone(1.0f, 2.5f, 8, 1) } };
-
-    for (uint32_t i = 0; i < instances; ++i) {
-        modelInstances.push_back({ .transform = glm::mat4(1.0f) });
-    }
-
-    scene.materials.items[0].normalTex = scene.loadTexture("res/textures/brickwall_normal.jpg", VK_FORMAT_R8G8B8A8_UNORM);
-    scene.pbrMaterials.items[0].normalTex = scene.materials.items[0].normalTex;
-    scene.materials.items[0].diffuseTex = scene.loadTexture("res/textures/brickwall.jpg");
-}
-
-void Application::loadPlanetScene()
-{
-    //planet = loadOBJ("res/objects/planet/planet.obj");
-    //rock = loadOBJ("res/objects/rock/rock.obj");
-    planet = scene.loadModel("res/objects/gltf/lavaplanet.gltf");
-    //GeometryData sphereData = createSphere(3, 36, 18);
-    //planet = scene.loadModel(sphereData.vertices, sphereData.indices, "planet");
-    rock = scene.loadModel("res/objects/gltf/rock01.gltf");
+    auto planet = scene.loadModel("res/objects/gltf/lavaplanet.gltf");
+    auto rock = scene.loadModel("res/objects/gltf/rock01.gltf");
 
     float radius = 150.0;
     float offset = 25.0f;
@@ -513,7 +343,7 @@ void Application::loadPlanetScene()
     t = glm::translate(t, glm::vec3(0.0f, -3.0f, 0.0f));
     t = glm::scale(t, glm::vec3(8.0f, 8.0f, 8.0f));
 
-    planetInstances.push_back({ .transform = t });
+    planet.instances.push_back({ .transform = t });
 
     for (uint32_t i = 0; i < rocksCount; ++i) {
         t = glm::mat4(1.0f);
@@ -536,13 +366,18 @@ void Application::loadPlanetScene()
         float rotAngle = static_cast<float>((rand() % 360));
         t = glm::rotate(t, rotAngle, glm::vec3(0.4f, 0.6f, 0.8f));
 
-        rockInstances.push_back({ .transform = t });
+        rock.instances.push_back({ .transform = t });
     }
+
+    scene.storeModel(planet);
+    rockModelIndex = scene.storeModel(rock);
 }
 
-void Application::loadLights()
+void Application::createLights()
 {
-    lights.push_back({
+    scene.lights.clear();
+
+    scene.lights.push_back({
         .direction = { -0.2f, -1.0f, -0.3f, 0.0f },
         .ambient = { 0.05f, 0.05f, 0.05f, 1.0f },
         .diffuse = { 0.8f, 0.8f, 0.8f, 1.0f },
@@ -550,20 +385,10 @@ void Application::loadLights()
         .type = LightType::Directional,
     });
 
-    lights.push_back({
-        .position = { 0.0f, 1.0f, 1.0f , 1.0f},
-        .ambient = { 0.05f, 0.05f, 0.05f, 1.0f },
-        .diffuse = { 0.25f, 0.0f, 1.0f, 1.0f },
-        .specular = { 1.0f, 1.0f, 1.0f, 1.0f },
-        .constant = 1.0f,
-        .linear = 0.09f,
-        .quadratic = 0.032f,
-        .type = LightType::Point
-    });
-
-    lights.push_back({
-        .position = {camera.position, 1.0f},
-        .direction = {camera.front, 1.0f},
+    /*
+    scene.lights.push_back({
+        .position = { camera.position, 1.0f },
+        .direction = { camera.front, 1.0f },
         .ambient = { 0.0f, 0.0f, 0.0f, 1.0f },
         .diffuse = { 1.0f, 1.0f, 1.0f, 1.0f },
         .specular = { 1.0f, 1.0f, 1.0f, 1.0f },
@@ -573,67 +398,47 @@ void Application::loadLights()
         .cutOff = glm::cos(glm::radians(12.5f)),
         .outerCutOff = glm::cos(glm::radians(15.0f)),
         .type = LightType::Spot
-    });
+    });*/
 
-    default_random_engine gen;
-    uniform_real_distribution<float> distribution(-10.0, 10.0);
-    uniform_real_distribution<float> distribution2(0.0, 1.0);
+    default_random_engine generator;
+    uniform_real_distribution<float> posDistribution(-10.0, 10.0);
+    uniform_real_distribution<float> colorDistribution(0.0, 1.0);
 
-    for (uint32_t i = 0; i < lightsCount; ++i) {
-        glm::vec4 pos = { distribution(gen), 1, distribution(gen), 1.0f };
-        glm::vec4 col = { distribution2(gen), distribution2(gen), distribution2(gen), 1.0f };
-        lights.push_back({
+    for (int i = 0; i < lightsCount; ++i) {
+        glm::vec4 pos = { posDistribution(generator), posDistribution(generator), posDistribution(generator), 1.0f };
+        glm::vec4 color = { colorDistribution(generator), colorDistribution(generator), colorDistribution(generator), 1.0f };
+        scene.lights.push_back({
             .position = pos,
-            .ambient = 0.1f * col,
-            .diffuse = col,
+            .ambient = 0.1f * color,
+            .diffuse = color,
             .specular = { 1.0f, 1.0f, 1.0f, 1.0f },
+            .intensity = 10.0f,
+            .radius = 4.0f,
             .constant = 1.0f,
             .linear = 20.0f,
-            .quadratic = 15.8f,
+            .quadratic = 13.8f,
             .type = LightType::Point
         });
     }
 
-    size_t lightSize = sizeof(uint32_t) * 4 + sizeof(Light) * lights.size(); // (lights count + padding) + lights array
-    lightDataBuffers.create(framesInFlight.size(), lightSize, vulkan.device, vulkan.allocator);
-
-    GeometryData sphereData = createSphere(0.2, 36, 18);
-    sphere = scene.loadModel(sphereData.vertices, sphereData.indices, "sphere");
-
-    for (uint32_t i = 0; i < lights.size(); ++i) {
-        if (lights[i].type == LightType::Point) {
-            vke::Sphere lightVol = lightSphere(lights[i]);
-            std::cout << "light[" << i<<"] radius: " << lightVol.radius << std::endl;
-            lightInstances.push_back({
-                .transform = glm::translate(glm::mat4(1.0f), glm::vec3(lights[i].position))
-            });
-        } else {
-            lightInstances.push_back({});
-        }
+    if (!scene.models.contains("sphere")) {
+        GeometryData sphereData = createSphere(1, 36, 18);
+        auto sphere = scene.loadModel(sphereData.vertices, sphereData.indices, "sphere");
+        scene.storeModel(sphere);
     }
-}
 
-void Application::updateTestScene(float dt)
-{
-    float modelZ = 0.0f;
-
-    for (int i = 0; i < (int)modelInstances.size(); ++i) {
-        glm::vec3 pos = objPosition + glm::vec3((float)((i%5) - 2) * 3.0f, -0.f, modelZ);
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(glm::quat(objRotation));
-        modelInstances[i].transform = glm::scale(transform, glm::vec3(objScale));
-
-        if (i%5 == 0) {
-            modelZ -= 2;
-        }
-    }
+    size_t lightSize = sizeof(uint32_t) * 4 + sizeof(Light) * scene.lights.size(); // (lights count + padding) + lights array
+    scene.lightBuffers.create(framesInFlightCount, lightSize, vulkan.device, vulkan.allocator);
 }
 
 void Application::updatePlanetScene(float dt)
 {
+    auto &rockModel = scene.models.items[rockModelIndex];
+
     if (!pauseSimulation) {
         #pragma omp parallel for
-        for (int i = 0; i < (int)rockInstances.size(); ++i) {
-            auto &t = rockInstances[i].transform;
+        for (int i = 0; i < (int)rockModel.instances.size(); ++i) {
+            auto &t = rockModel.instances[i].transform;
             auto pos = glm::vec3(t[3]);
             auto t1 = glm::translate(glm::mat4(1.0f),-pos);
             auto r = glm::rotate(glm::mat4(1.0f), glm::radians(dt), {0,1,0});
@@ -642,12 +447,12 @@ void Application::updatePlanetScene(float dt)
         }
     }
 
+    /*
     if (doCulling) {
-        auto extent = renderer.drawExtent();
-        Frustum frustum(camera.projection((float)extent.width / (float)extent.height, 0.1f, 1000.0f) * camera.view());
+        Frustum frustum(scene.camera.projection() * scene.camera.view());
 
         timeToCullInstances = measureExecution<chrono::microseconds>([&]{
-            cullInstances(rockInstances, frustum);
+            cullInstances(rockModel.instances, frustum);
         });
 
         culledInstances = 0;
@@ -658,11 +463,12 @@ void Application::updatePlanetScene(float dt)
             else
                 culledInstances++;
         }
-    }
+    }*/
 }
 
-void Application::updateLights(float dt)
+void Application::updateLights()
 {
+    /*
     // spotlight follows camera
     lights[2].position = glm::vec4(camera.position, 1.0f);
     lights[2].direction = glm::vec4(camera.front, 1.0f);
@@ -674,36 +480,41 @@ void Application::updateLights(float dt)
     for (int i = 0; i < (int)lightInstances.size(); ++i) {
         if (lights[i].type == LightType::Point)
             lightInstances[i].transform = glm::translate(glm::mat4(1.0f), glm::vec3(lights[i].position));
-    }
+    }*/
 
     auto extent = renderer.drawExtent();
 
     // Update light clusters
-    timeToBuildClusters = measureExecution<std::chrono::microseconds>([&]{
-        auto proj = camera.projection((float)extent.width / (float)extent.height, 0.1f, 100.0f);
-        lightClusters = buildLightClusters(0.1f, 100.0f, { 16, 9, 24 }, { extent.width, extent.height }, glm::inverse(proj));
-    });
+    auto lightClusters = buildLightClusters(scene.camera.nearPlane, scene.camera.farPlane,
+        clusterGridSize, glm::inverse(scene.camera.projection()));
 
-    timeToAssignLights = measureExecution<std::chrono::microseconds>([&]{
-        std::vector<vke::Sphere> lightSpheres(lights.size());
-        for (size_t i = 0; i < lights.size(); ++i)
-            lightSpheres[i] = lightSphere(lights[i]);
+    std::vector<vke::Sphere> lightSpheres(scene.lights.size());
 
-        assignLightsToClusters(lightClusters, lightSpheres);
-    });
+    for (size_t i = 0; i < scene.lights.size(); ++i) {
+        Light light = scene.lights[i];
+        lightSpheres[i] = Sphere(scene.camera.view() * light.position, light.radius); //lightSphere(light, 0.001);
+        if (light.type == LightType::Directional)
+            lightSpheres[i].radius = FLT_MAX;
+    }
+
+    assignLightsToClusters(lightClusters, lightSpheres);
+
+    scene.lightClusterBuffers.update(currentFrameIndex, lightClusters.data(), sizeof(LightCluster) * lightClusters.size());
+
+    LightClusterInfo clusterInfo {
+        .screenSize = { extent.width, extent.height },
+        .clusterGridSize = clusterGridSize,
+        .showClusters = showClusters,
+        .zNear = scene.camera.nearPlane,
+        .zFar = scene.camera.farPlane,
+        .scale = clusterGridSize.z / std::log2(scene.camera.farPlane / scene.camera.nearPlane),
+        .bias = -clusterGridSize.z * std::log2(scene.camera.nearPlane) / std::log2(scene.camera.farPlane / scene.camera.nearPlane)
+    };
+
+    scene.lightClusterInfoBuffers.update(currentFrameIndex, &clusterInfo, sizeof(LightClusterInfo));
 }
 
-void Application::drawTestScene(VkCommandBuffer cmd, VkPipelineLayout layout)
-{
-    model.draw(cmd, modelInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances), multiDraw);
-}
-
-void Application::drawPlanetScene(VkCommandBuffer cmd, VkPipelineLayout layout)
-{
-    planet.draw(cmd, planetInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances), multiDraw);
-    rock.draw(cmd, doCulling ? visibleRocks : rockInstances, currentFrameIndex, layout, offsetof(BindlessPushConstants,instances), multiDraw);
-}
-
+/*
 void Application::cullInstances(std::vector<InstanceData> &instances, const Frustum &frustum)
 {
     #pragma omp parallel for
@@ -711,4 +522,4 @@ void Application::cullInstances(std::vector<InstanceData> &instances, const Frus
         Volume v = rock.volume.transformed(instance.transform);
         instance.isVisible = frustum.intersect(v.min, v.max);
     }
-}
+}*/

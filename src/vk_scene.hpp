@@ -14,11 +14,22 @@
 
 namespace vke {
 
+struct BindlessPushConstants {
+    VkDeviceAddress camera;
+    VkDeviceAddress instances;
+    VkDeviceAddress materials;
+    VkDeviceAddress lights;
+    VkDeviceAddress lightClusters;
+    VkDeviceAddress lightClusterInfo;
+};
+
 template<typename T>
 struct Resources {
     Resources() { items.resize(1); itemsMap.insert({ "default", 0 }); } // reserve first item
 
     void setDefault(const T& item) { items[0] = item; }
+
+    bool contains(const std::string &name) { return itemsMap.find(name) != itemsMap.end(); }
 
     T& get(const std::string &name) { return items[itemsMap[name]]; }
 
@@ -95,6 +106,8 @@ public:
     Model loadOBJ(const std::string &path);
     Model loadGLTF(const std::string &path);
 
+    void updateUniforms(VkCommandBuffer cmd, VkPipelineLayout pipelineLayout, uint32_t currentFrameIndex);
+
     Camera camera;
 
     std::vector<vke::Light> lights; // from ecs world?
@@ -106,6 +119,8 @@ public:
     // shader buffers
     vke::UBOs cameraBuffers;
     vke::SSBOs lightBuffers;
+    vke::SSBOs lightClusterBuffers;
+    vke::UBOs lightClusterInfoBuffers;
     vke::SSBOs materialBuffers;
     vke::SSBOs pbrMaterialBuffers;
 

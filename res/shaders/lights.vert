@@ -9,7 +9,6 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ShaderData 
     mat4 projection;
     mat4 view;
     vec4 viewPos;
-    vec4 light;
 };
 
 struct MeshData {

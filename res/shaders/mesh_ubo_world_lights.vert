@@ -20,7 +20,6 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ShaderData 
     mat4 projection;
     mat4 view;
     vec4 viewPos;
-    vec4 light;
 };
 
 struct MeshData {
@@ -46,7 +45,6 @@ void main()
     mat4 model = pc.meshData.data[gl_InstanceIndex].transform;
 
     mat4 viewModel = view * model;
-    vec3 lightPos = vec3(pc.shaderData.light);
     vec3 viewPos = vec3(pc.shaderData.viewPos);
     fragPos =  vec3(model * vec4(vPosition, 1.0f));
 

@@ -2,10 +2,7 @@
 #define ENGINE_HPP
 
 #include "vk_engine.hpp"
-#include "vk_mesh.hpp"
-#include "vk_camera.hpp"
 #include "vk_bvh.hpp"
-#include "vk_light.hpp"
 
 #include <glm/glm.hpp>
 
@@ -23,75 +20,39 @@ protected:
 	void update(float dt) override;
     void processEvent(const SDL_Event &event) override;
 
-	void createPipelines();
-    void createPBRPipeline();
-    void createOffscreenPipeline();
-	void cleanupPipelines();
-    void loadAssets();
-    void cleanupAssets();
+    void createPipelines();
+    void cleanupPipelines();
+    void createTestScene();
+    void createPlanetScene();
+    void createLights();
+    void updateLights();
 
-    void loadTestScene();
-    void loadPlanetScene();
-    void loadLights();
-    void updateTestScene(float dt);
     void updatePlanetScene(float dt);
-    void updateLights(float dt);
-    void drawTestScene(VkCommandBuffer cmd, VkPipelineLayout layout);
-    void drawPlanetScene(VkCommandBuffer cmd, VkPipelineLayout layout);
     void cullInstances(std::vector<vke::InstanceData> &instances, const vke::Frustum &frustum);
 
     VkPipelineLayout pipelineLayout;
-    VkPipeline pipeline;
+    VkPipeline mtlPipeline;
     VkPipeline pbrPipeline;
+    VkPipeline clusteredPbrPipeline;
     VkPipeline lightsPipeline;
-    VkPipelineLayout offscreenPipelineLayout;
-    VkPipeline offscreenPipeline;
 
-    // test scene
-    vke::Model model;
-    vke::Model sphere;
-    std::vector<vke::InstanceData> modelInstances;
-    std::vector<vke::InstanceData> lightInstances;
+    // point lights
+    int lightsCount = 30;
+    glm::vec3 clusterGridSize = glm::vec3(12, 12, 24);
+    bool useClustered = true;
+    bool showClusters = false;
+    bool showLights = true;
 
     // planet scene
-    vke::Model planet;
-    vke::Model rock;
     uint32_t rocksCount = 30000;
-    std::vector<vke::InstanceData> planetInstances;
-    std::vector<vke::InstanceData> rockInstances;
-    std::vector<vke::InstanceData> visibleRocks;
     size_t culledInstances = 0;
+    uint32_t rockModelIndex;
     double timeToCullInstances;
     bool doCulling = true;
     bool pauseSimulation = false;
 
-    struct {
-        glm::mat4 projection;
-        glm::mat4 view;
-        glm::vec4 viewPos;
-        glm::vec4 light{ 0.0f, -0.0f, 10.0f, 0.0f };
-    } sceneData;
-
-    std::vector<vke::Light> lights;
-    std::vector<vke::LightCluster> lightClusters;
-    double timeToBuildClusters;
-    double timeToAssignLights;
-
-    vke::UBOs sceneDataBuffers;
-    vke::SSBOs lightDataBuffers;
-    vke::UBOs materialBuffers;
-    vke::UBOs pbrMaterialBuffers;
-
-    vke::Camera camera;
-    float fov = 45.f;
-    uint32_t instances = 1;
-    uint32_t lightsCount = 1;
-    float objScale = 1.0f;
-    glm::vec3 objPosition = {};
-    glm::vec3 objRotation = {};
     bool paused = true;
     bool multiDraw = true;
-    std::vector<vke::Material> backupMaterials;
     vke::Octree octree;
 };
 

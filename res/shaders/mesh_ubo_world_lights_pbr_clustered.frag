@@ -43,8 +43,20 @@ struct Light {
     uint type;
 };
 
+struct LightCluster {
+    vec4 min;
+    vec4 max;
+    uint count;
+    float pad[3];
+    uint lights[128];
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer MaterialArray {
     PBRMaterial data[];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer LightClusterArray {
+    LightCluster data[];
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer LightArray {
@@ -53,9 +65,22 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer LightArray {
     Light data[];
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer LightClusterInfo {
+    vec2 screenSize;
+    float pad[2];
+    vec3 clusterGridSize;
+    int showCluster;
+    float zNear;
+    float zFar;
+    float scale;
+    float bias;
+};
+
 layout(push_constant) uniform Constants {
     layout(offset = 16) MaterialArray materials;
     layout(offset = 24) LightArray lights;
+    layout(offset = 32) LightClusterArray lightClusters;
+    layout(offset = 40) LightClusterInfo lightClusterInfo;
 } pc;
 
 float distributionGGX(vec3 N, vec3 H, float roughness)
@@ -98,6 +123,17 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+float linearDepth(float depthSample, float zNear, float zFar){
+    // https://stackoverflow.com/questions/51108596/linearize-depth
+    //return zNear * zFar / (zFar + depthSample * (zNear - zFar));
+
+    //float depthRange = 2.0 * depthSample - 1.0;
+    float depthRange = depthSample;
+    // Near... Far... wherever you are...
+    float linear = 2.0 * zNear * zFar / (zFar + zNear - depthRange * (zFar - zNear));
+    return linear;
+}
+
 void main()
 {
     PBRMaterial material = pc.materials.data[materialIndex];
@@ -118,8 +154,44 @@ void main()
     // reflectance equation
     vec3 Lo = vec3(0.0);
 
-    for(int i = 0; i < pc.lights.count; ++i) {
-        Light light = pc.lights.data[i];
+    // light cluster index
+    uvec3 gridSize = uvec3(pc.lightClusterInfo.clusterGridSize.xyz);
+    vec2 screenDimensions = pc.lightClusterInfo.screenSize.xy;
+    float zNear = pc.lightClusterInfo.zNear;
+    float zFar = pc.lightClusterInfo.zFar;
+    float scale = pc.lightClusterInfo.scale;
+    float bias = pc.lightClusterInfo.bias;
+
+    vec2 tileSize = screenDimensions / gridSize.xy;
+    uint zTile = uint(max(log2(linearDepth(gl_FragCoord.z, zNear, zFar)) * scale + bias, 0.0));
+    uvec3 tile = uvec3(gl_FragCoord.xy / tileSize, zTile);
+    //tile.y = uint((screenDimensions.y-gl_FragCoord.y)/tileSize.y);
+    uint tileIndex = tile.x + (tile.y * gridSize.x) + (tile.z * gridSize.x * gridSize.y);
+    uint lightCount = pc.lightClusters.data[tileIndex].count;
+
+    if (pc.lightClusterInfo.showCluster > 0) {
+        outFragColor = vec4(vec3((tile.z)/float(gridSize.z-1)),1);
+        return;
+    }
+    //outFragColor = vec4(vec3((tile.z)/float(gridSize.z-1)),1);
+    //outFragColor = vec4(vec3((tile.y)/float(gridSize.y-1)),1);
+    //outFragColor = vec4(vec3(gl_FragCoord.z),1);
+    //outFragColor = vec4(vec3(linearDepth(gl_FragCoord.z, zNear, zFar)),1);
+    //return;
+
+    if (lightCount >= 100) {
+        //getting close to limit. Output red color and dip
+        outFragColor = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+        return;
+    }
+
+    for(int i = 0; i < pc.lightClusters.data[tileIndex].count; ++i) {
+        uint lightIndex = pc.lightClusters.data[tileIndex].lights[i];
+    //for(int i = 0; i < pc.lights.count; ++i) {
+    //    uint lightIndex = i;
+        Light light = pc.lights.data[lightIndex];
+        //Light light = pc.lights.data[i];
+
         vec3 L;
         vec3 radiance;
 
@@ -133,7 +205,8 @@ void main()
             L = normalize(toLight);
 
             float distance = length(toLight);
-            //float attenuation = 1.0 / max(distance * distance, 0.0001);
+            //float attenuation = 1.0 / max(distance * distance, 0.001);
+            //float attenuation = 1.0 / (light.constant + light.linear * distance + light.quadratic * (distance * distance));
             float attenuation = light.intensity / (distance * distance + 1);
             attenuation *= pow(clamp(1.0 - pow(distance / light.radius, 4.0), 0.0, 1.0), 2.0);
 
@@ -186,6 +259,7 @@ void main()
 
     // HDR tonemapping
     color = color / (color + vec3(1.0));
+    //color = pow(color, vec3(1.0/2.2));
 
     outFragColor = vec4(color, 1.0);
     //outFragColor = vec4(1,0,0,1);

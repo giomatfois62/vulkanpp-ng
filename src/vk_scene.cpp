@@ -40,6 +40,13 @@ void Scene::init(VkDevice device, uint32_t queueFamilyIndex, VmaAllocator alloca
     commandPool = createCommandPool(queueFamilyIndex, device);
 
     createBindlessDescriptors();
+
+    cameraBuffers.create(framesInFlightCount, 1, device, allocator);
+    lightBuffers.create(framesInFlightCount, 1, device, allocator);
+    lightClusterBuffers.create(framesInFlightCount, 1, device, allocator);
+    materialBuffers.create(framesInFlightCount, 1, device, allocator);
+    pbrMaterialBuffers.create(framesInFlightCount, 1, device, allocator);
+    lightClusterInfoBuffers.create(framesInFlightCount, sizeof(LightClusterInfo), device, allocator);
 }
 
 void Scene::createBindlessDescriptors()
@@ -112,6 +119,13 @@ void Scene::cleanup()
 
     vkDestroyDescriptorSetLayout(device, bindlessDescriptorSetLayout, nullptr);
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+
+    cameraBuffers.cleanup();
+    lightBuffers.cleanup();
+    lightClusterBuffers.cleanup();
+    materialBuffers.cleanup();
+    pbrMaterialBuffers.cleanup();
+    lightClusterInfoBuffers.cleanup();
 }
 
 Texture Scene::createTexture(const TextureData &data)
@@ -679,6 +693,38 @@ Model Scene::loadGLTF(const std::string &path)
     model.upload(vertices, indices, framesInFlightCount, device, allocator);
 
     return model;
+}
+
+void Scene::updateUniforms(VkCommandBuffer cmd, VkPipelineLayout pipelineLayout, uint32_t currentFrameIndex)
+{
+    struct {
+        glm::mat4 projection;
+        glm::mat4 view;
+        glm::vec4 viewPos;
+    } cameraData;
+
+    cameraData.projection = camera.projection();
+    cameraData.view = camera.view();
+    cameraData.viewPos = { camera.position, 1.0f };
+
+    cameraBuffers.update(currentFrameIndex, &cameraData, sizeof(cameraData));
+    materialBuffers.update(currentFrameIndex, materials.data(), materials.dataSize());
+    pbrMaterialBuffers.update(currentFrameIndex, pbrMaterials.data(), pbrMaterials.dataSize());
+
+    uint32_t lightsCount = lights.size();
+    lightBuffers.update(currentFrameIndex, &lightsCount, sizeof(uint32_t));
+    lightBuffers.update(currentFrameIndex, lights.data(), sizeof(Light) * lights.size(), sizeof(uint32_t) * 4);
+
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,camera),
+        sizeof(VkDeviceAddress), &cameraBuffers.deviceAddress(currentFrameIndex));
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,materials),
+        sizeof(VkDeviceAddress), &pbrMaterialBuffers.deviceAddress(currentFrameIndex));
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,lights),
+        sizeof(VkDeviceAddress), &lightBuffers.deviceAddress(currentFrameIndex));
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,lightClusters),
+        sizeof(VkDeviceAddress), &lightClusterBuffers.deviceAddress(currentFrameIndex));
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_ALL, offsetof(BindlessPushConstants,lightClusterInfo),
+        sizeof(VkDeviceAddress), &lightClusterInfoBuffers.deviceAddress(currentFrameIndex));
 }
 
 Model Scene::loadModel(std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices, const std::string &name)

@@ -12,13 +12,14 @@ struct Light {
     vec4 ambient;
     vec4 diffuse;
     vec4 specular;
+    float intensity;
+    float radius;
     float constant;
     float linear;
     float quadratic;
     float cutOff;
     float outerCutOff;
     uint type;
-    uint pad[2];
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer LightArray {

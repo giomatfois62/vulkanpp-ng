@@ -6,6 +6,21 @@
 
 using namespace vke;
 
+void vke::setViewport(VkCommandBuffer cmd, float x, float y, float w, float h, bool invertY)
+{
+    // negative height to conform to opengl Y up
+    VkViewport viewport{ x, y, w, invertY ? -h : h, 0.0f, 1.0f };
+
+    vkCmdSetViewport(cmd, 0, 1, & viewport);
+}
+
+void vke::setScissor(VkCommandBuffer cmd, int x, int y, uint32_t w, uint32_t h)
+{
+    VkRect2D scissor{ VkOffset2D{ x, y }, VkExtent2D{ w, h } };
+
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+}
+
 void Renderer::init(VkDevice device, VkPhysicalDevice gpu, VmaAllocator allocator, uint32_t width, uint32_t height, VkFormat imageFormat)
 {
     this->device = device;
@@ -44,23 +59,34 @@ void Renderer::cleanup()
 void Renderer::render(VkCommandBuffer cmd, VkImage targetImage, std::function<void (VkCommandBuffer)> drawCommands)
 {
     // transition images
-    changeImageLayout(cmd, drawImage.handle,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // vkguide?
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
+    imageBarriers.push_back(
+        changeImageLayout(cmd, drawImage.handle,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // vkguide?
+            VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 },
+            false
+        )
     );
 
-    changeImageLayout(cmd, colorImage.handle,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
+    imageBarriers.push_back(
+        changeImageLayout(cmd, colorImage.handle,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 },
+            false
+        )
     );
 
-    changeImageLayout(cmd, depthImage.handle,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, .levelCount = 1, .layerCount = 1 }
+    imageBarriers.push_back(
+        changeImageLayout(cmd, depthImage.handle,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, .levelCount = 1, .layerCount = 1 },
+            false
+        )
     );
+
+    flushBarriers(cmd);
 
     // begin rendering
     VkRenderingAttachmentInfo colorAttachmentInfo{
@@ -89,6 +115,7 @@ void Renderer::render(VkCommandBuffer cmd, VkImage targetImage, std::function<vo
 
     // set pipeline dynamic states
     setViewport(cmd, 0.0f, extent.height, extent.width, extent.height);
+    //setViewport(cmd, 0.0, 0, extent.width, extent.height, false);
     setScissor(cmd, 0, 0, extent.width, extent.height);
 
     // begin rendering
@@ -110,18 +137,26 @@ void Renderer::render(VkCommandBuffer cmd, VkImage targetImage, std::function<vo
     vkCmdEndRendering(cmd);
 
     // copy drawImage to targetImage
-    changeImageLayout(cmd, drawImage.handle,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
+    imageBarriers.push_back(
+        changeImageLayout(cmd, drawImage.handle,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 },
+            false
+        )
     );
 
-    changeImageLayout(cmd, targetImage,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // if rendering offscreen
-        //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // if rendering or resolving directly on it
-        VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
+    imageBarriers.push_back(
+        changeImageLayout(cmd, targetImage,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // if rendering offscreen
+            //VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // if rendering or resolving directly on it
+            VkImageSubresourceRange{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 },
+            false
+        )
     );
+
+    flushBarriers(cmd);
 
     copyImageToImage(cmd, drawImage.handle, targetImage, extent, targetImageExtent, VK_FILTER_LINEAR);
 
@@ -243,19 +278,20 @@ VkExtent2D Renderer::drawExtent()
     };
 }
 
-void Renderer::setViewport(VkCommandBuffer cmd, float x, float y, float w, float h, bool invertY)
+void Renderer::flushBarriers(VkCommandBuffer cmd)
 {
-    // negative height to conform to opengl Y up
-    VkViewport viewport{ x, y, w, invertY ? -h : h, 0.0f, 1.0f };
+    VkDependencyInfo depInfo{
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size()),
+        .pBufferMemoryBarriers = bufferBarriers.data(),
+        .imageMemoryBarrierCount = static_cast<uint32_t>(imageBarriers.size()),
+        .pImageMemoryBarriers = imageBarriers.data()
+    };
 
-    vkCmdSetViewport(cmd, 0, 1, & viewport);
-}
+    vkCmdPipelineBarrier2(cmd, &depInfo);
 
-void Renderer::setScissor(VkCommandBuffer cmd, int x, int y, uint32_t w, uint32_t h)
-{
-    VkRect2D scissor{ VkOffset2D{ x, y }, VkExtent2D{ w, h } };
-
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    imageBarriers.clear();
+    bufferBarriers.clear();
 }
 
 bool Renderer::msaaEnabled()

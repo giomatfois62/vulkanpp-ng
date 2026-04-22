@@ -7,6 +7,9 @@
 
 namespace vke {
 
+void setViewport(VkCommandBuffer cmd, float x, float y, float w, float h, bool invertY = true);
+void setScissor(VkCommandBuffer cmd, int x, int y, uint32_t w, uint32_t h);
+
 class Renderer
 {
 public:
@@ -16,12 +19,10 @@ public:
     void cleanup();
     void render(VkCommandBuffer cmd, VkImage targetImage, std::function<void(VkCommandBuffer)> drawCommands);
     void createResources();
-    void setViewport(VkCommandBuffer cmd, float x, float y, float w, float h, bool invertY = true);
-    void setScissor(VkCommandBuffer cmd, int x, int y, uint32_t w, uint32_t h);
     void setMSAASamples(VkSampleCountFlagBits samples);
-
     bool msaaEnabled();
     VkExtent2D drawExtent();
+    void flushBarriers(VkCommandBuffer cmd);
 
     float renderScale = 1.0f;
     VkSampleCountFlagBits MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -38,6 +39,8 @@ protected:
     VmaAllocator allocator;
     VkExtent2D targetImageExtent;
     VkFormat targetImageFormat;
+    std::vector<VkImageMemoryBarrier2> imageBarriers;
+    std::vector<VkBufferMemoryBarrier2> bufferBarriers;
 };
 
 } // end namespace vke
