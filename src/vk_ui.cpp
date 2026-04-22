@@ -37,7 +37,9 @@ void vke::drawUI(Scene &scene)
             std::string modelPath;
             if (ImGui::SelectFile("", modelPath, { ".obj", ".gltf", ".glb" })) {
                 std::cout << "Selected Model: " << modelPath << std::endl;
-                scene.storeModel(scene.loadModel(modelPath));
+                auto model = scene.loadModel(modelPath);
+                model.instances.push_back({ .transform = glm::mat4(1.0f) });
+                scene.storeModel(model);
             }
 
             drawResourcesUI(scene.models, scene);
@@ -148,6 +150,9 @@ void vke::drawUI(Camera &camera)
 {
     ImGui::SliderFloat("Speed", &camera.movementSpeed, 0, 100);
     ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0, 1);
+    ImGui::InputFloat3("Position", &camera.position[0]);
+    ImGui::SliderFloat("NearPlane", &camera.nearPlane, 0.001, 500);
+    ImGui::SliderFloat("FarPlane", &camera.farPlane, 0.001, 500);
 }
 
 bool ImGui::InputMat4(const char *id, glm::mat4 &mat)
@@ -301,23 +306,18 @@ void UI::init(VkInstance instance, VkDevice device, VkPhysicalDevice gpu, VkQueu
 
     ImGui_ImplVulkan_Init(&initInfo);
 
+    // merge icons from Font Awesome
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->AddFontDefault();
     float baseFontSize = 13.0f; // 13.0f is the size of the default font. Change to the font size you use.
     float iconFontSize = baseFontSize * 2.0f / 3.0f; // FontAwesome fonts need to have their sizes reduced by 2.0f/3.0f in order to align correctly
 
-    // merge in icons from Font Awesome
     static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
     ImFontConfig icons_config;
     icons_config.MergeMode = true;
     icons_config.PixelSnapH = true;
     icons_config.GlyphMinAdvanceX = iconFontSize;
     io.Fonts->AddFontFromFileTTF("res/fonts/" FONT_ICON_FILE_NAME_FA, iconFontSize, &icons_config, icons_ranges);
-}
-
-void UI::resize(uint32_t width, uint32_t height)
-{
-    this->targetImageExtent = { width, height };
 }
 
 void UI::cleanup()
@@ -337,7 +337,7 @@ void UI::update(std::function<void ()> drawCommands)
     ImGui::Render();
 }
 
-void UI::render(VkCommandBuffer cmd, VkImageView targetImageView)
+void UI::render(VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D targetImageExtent)
 {
     VkRenderingAttachmentInfo colorAttachmentInfo{
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,

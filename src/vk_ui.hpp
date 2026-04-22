@@ -29,16 +29,14 @@ class UI {
 public:
     void init(VkInstance instance, VkDevice device, VkPhysicalDevice gpu, VkQueue queue,
         SDL_Window *window, VkFormat imageFormat, uint32_t imageCount);
-    void resize(uint32_t width, uint32_t height);
     void cleanup();
     void update(std::function<void(void)> drawCommands);
-    void render(VkCommandBuffer cmd, VkImageView targetImageView);
+    void render(VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D targetImageExtent);
     void processEvent(SDL_Event &e);
 
 protected:
     VkDevice device;
     VkDescriptorPool imguiDescriptorPool;
-    VkExtent2D targetImageExtent;
 };
 
 } // end namespace vke
