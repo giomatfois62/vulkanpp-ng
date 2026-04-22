@@ -16,7 +16,7 @@ glm::mat4 Camera::view()
     return glm::lookAt(position, position + front, up);
 }
 
-glm::mat4 Camera::projection(float aspectRatio, float nearPlane, float farPlane)
+glm::mat4 Camera::projection()
 {
     return glm::perspective(glm::radians(zoom), aspectRatio, nearPlane, farPlane);
 }

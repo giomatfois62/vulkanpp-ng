@@ -31,8 +31,12 @@ struct Camera {
     float mouseSensitivity = 0.1f;  // Multiplier for mouse input to rotation angle conversion
     float zoom = 45.0f;             // Field of view control for perspective projection
 
+    float aspectRatio = 1.0f;
+    float nearPlane = 0.1f;
+    float farPlane = 100.0f;
+
     glm::mat4 view();
-    glm::mat4 projection(float aspectRatio, float nearPlane = 0.1f, float farPlane = 100.0f);
+    glm::mat4 projection();
 
     void processKeyboard(CameraMovement direction, float dt);
     void processMouseMovement(float xOffset, float yOffset, bool constrainPitch);
