@@ -28,13 +28,67 @@ namespace std {
 using namespace std;
 using namespace vke;
 
+void Window::create()
+{
+    SDL_Init(SDL_INIT_VIDEO);
+
+    uint32_t flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
+
+    handle = SDL_CreateWindow(
+        title, //window title
+        SDL_WINDOWPOS_UNDEFINED, //window position x (don't care)
+        SDL_WINDOWPOS_UNDEFINED, //window position y (don't care)
+        extent.width,  //window width in pixels
+        extent.height, //window height in pixels
+        flags
+    );
+
+    if (!handle)
+        throw std::runtime_error("Failed creating SDL2 window.");
+
+    int width, height;
+    SDL_GetWindowSize(handle, &width, &height);
+
+    extent.width = width;
+    extent.height = height;
+}
+
 void Window::cleanup()
 {
     SDL_DestroyWindow(handle);
     handle = nullptr;
 }
 
-void Frame::cleanup(VkDevice device)
+void Frame::create(VkDevice device, uint32_t graphicsQueueIndex)
+{
+    this->device = device;
+
+    VkCommandPoolCreateInfo commandPoolInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = graphicsQueueIndex
+    };
+
+    VkSemaphoreCreateInfo semaphoreInfo{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+
+    VkFenceCreateInfo fenceInfo{ .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+
+    VK_CHECK(vkCreateCommandPool(device, &commandPoolInfo, nullptr, &commandPool));
+
+    VkCommandBufferAllocateInfo cmdAllocInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = commandPool,
+        .commandBufferCount = 1
+    };
+
+    VK_CHECK(vkAllocateCommandBuffers(device, &cmdAllocInfo, &mainCommandBuffer));
+
+    VK_CHECK(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore));
+
+    VK_CHECK(vkCreateFence(device, &fenceInfo, nullptr, &renderFinishedFence));
+}
+
+void Frame::cleanup()
 {
     vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
     vkDestroyFence(device, renderFinishedFence, nullptr);
@@ -62,10 +116,10 @@ void Engine::quit()
 
 void Engine::setWindowTitle(const char *title)
 {
-	windowTitle = title;
+    window.title = title;
 
-	if (window)
-		SDL_SetWindowTitle(window, title);
+    if (window.handle)
+        SDL_SetWindowTitle(window.handle, title);
 }
 
 void Engine::setApplicationName(const char *name)
@@ -136,16 +190,14 @@ void Engine::cleanup()
     scene.cleanup();
 
     for (auto &frame : framesInFlight)
-        frame.cleanup(vulkan.device);
+        frame.cleanup();
 
     for (auto &semaphore: renderFinishedSemaphores)
         vkDestroySemaphore(vulkan.device, semaphore, nullptr);
 
     swapchain.cleanup();
     vulkan.cleanup();
-
-	SDL_DestroyWindow(window);
-	window = nullptr;
+    window.cleanup();
 }
 
 void Engine::processEvents()
@@ -194,14 +246,13 @@ void Engine::processEvents()
 
 void Engine::resize(int width, int height)
 {
-	windowSize.width = width;
-	windowSize.height = height;
+    window.extent.width = width;
+    window.extent.height = height;
 
     waitIdle(); // wait for pending operations
 
     swapchain.resize(width, height);
     renderer.resize(width, height, swapchain.imageFormat);
-    ui.resize(width, height);
 
     waitIdle(); // wait for pending init
 
@@ -233,7 +284,7 @@ void Engine::renderFrame()
     renderer.render(cmd, swapchain.images[currentImageIndex], [&](VkCommandBuffer cmd){ draw(cmd); });
 
     // render ui
-    ui.render(cmd, swapchain.imageViews[currentImageIndex]);
+    ui.render(cmd, swapchain.imageViews[currentImageIndex], swapchain.extent);
 
     // end command buffer
     changeImageLayout(cmd, swapchain.images[currentImageIndex],
@@ -297,27 +348,7 @@ void Engine::processEvent(const SDL_Event&)
 
 void Engine::createWindow()
 {
-	SDL_Init(SDL_INIT_VIDEO);
-
-    uint32_t flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
-
-	window = SDL_CreateWindow(
-		windowTitle, //window title
-		SDL_WINDOWPOS_UNDEFINED, //window position x (don't care)
-		SDL_WINDOWPOS_UNDEFINED, //window position y (don't care)
-		windowSize.width,  //window width in pixels
-		windowSize.height, //window height in pixels
-		flags
-	);
-
-	if (!window)
-		throw std::runtime_error("Failed creating SDL2 window.");
-
-	int width, height;
-	SDL_GetWindowSize(window, &width, &height);
-
-	windowSize.width = width;
-	windowSize.height = height;
+    window.create();
 }
 
 void Engine::createVulkan()
@@ -349,50 +380,27 @@ void Engine::createVulkan()
         .dynamicRendering = VK_TRUE
     };
 
-    vulkan.create(window);
+    vulkan.create(window.handle);
 }
 
 void Engine::createSwapchain()
 {
-    swapchain.init(vulkan.gpu, vulkan.surface, vulkan.device);
-    swapchain.resize(windowSize.width, windowSize.height);
+    swapchain.init(vulkan.gpu, vulkan.surface, vulkan.device, vulkan.queueFamilies.graphics.value(),
+        vulkan.queueFamilies.present.value());
+    swapchain.resize(window.extent.width, window.extent.height);
 }
 
 void Engine::createFrames()
 {
     framesInFlight.resize(framesInFlightCount);
 
-    uint32_t queueFamilyIndex = vulkan.queueFamilies.graphics.value();
-
-    VkCommandPoolCreateInfo commandPoolInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = queueFamilyIndex
-    };
-
-    VkSemaphoreCreateInfo semaphoreInfo{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-
-    VkFenceCreateInfo fenceInfo{ .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
-
 	for (auto &frame : framesInFlight) {
-        VK_CHECK(vkCreateCommandPool(vulkan.device, &commandPoolInfo, nullptr, &frame.commandPool));
-
-        VkCommandBufferAllocateInfo cmdAllocInfo{
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = frame.commandPool,
-            .commandBufferCount = 1
-        };
-
-        VK_CHECK(vkAllocateCommandBuffers(vulkan.device, &cmdAllocInfo, &frame.mainCommandBuffer));
-
-        VK_CHECK(vkCreateSemaphore(vulkan.device, &semaphoreInfo, nullptr,
-            &frame.imageAvailableSemaphore));
-
-        VK_CHECK(vkCreateFence(vulkan.device, &fenceInfo, nullptr,
-			&frame.renderFinishedFence));
+        frame.create(vulkan.device, vulkan.queueFamilies.graphics.value());
 	}
 
     renderFinishedSemaphores.resize(swapchain.images.size());
+
+    VkSemaphoreCreateInfo semaphoreInfo{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
 
     for (size_t i = 0; i < swapchain.images.size(); ++i) {
         VkSemaphore renderSemaphore;
@@ -410,13 +418,12 @@ void Engine::createScene()
 
 void Engine::createRenderer()
 {
-    renderer.init(vulkan.device, vulkan.gpu, vulkan.allocator, windowSize.width, windowSize.height, swapchain.imageFormat);
+    renderer.init(vulkan.device, vulkan.gpu, vulkan.allocator, window.extent.width, window.extent.height, swapchain.imageFormat);
 }
 
 void Engine::createUI()
 {
-    ui.init(vulkan.instance, vulkan.device, vulkan.gpu, vulkan.graphicsQueue, window, swapchain.imageFormat, swapchain.images.size());
-    ui.resize(windowSize.width, windowSize.height);
+    ui.init(vulkan.instance, vulkan.device, vulkan.gpu, vulkan.graphicsQueue, window.handle, swapchain.imageFormat, swapchain.images.size());
 }
 
 bool Engine::prepareFrame(Frame &frame)
@@ -430,7 +437,7 @@ bool Engine::prepareFrame(Frame &frame)
 
 	if (res == VK_ERROR_OUT_OF_DATE_KHR) {
 		int width, height;
-		SDL_GetWindowSize(window, &width, &height);
+        SDL_GetWindowSize(window.handle, &width, &height);
 
 		resize(width, height);
 
@@ -469,7 +476,7 @@ void Engine::presentFrame(Frame &frame)
 
 	if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
 		int width, height;
-		SDL_GetWindowSize(window, &width, &height);
+        SDL_GetWindowSize(window.handle, &width, &height);
 
 		resize(width, height);
 	} else {

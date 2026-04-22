@@ -2,9 +2,9 @@
 #define VULKAN_ENGINE_HPP
 
 #include "vk_core.hpp"
-#include "vk_image.hpp"
 #include "vk_renderer.hpp"
 #include "vk_scene.hpp"
+#include "vk_swapchain.hpp"
 #include "vk_ui.hpp"
 
 #include <SDL.h>
@@ -16,6 +16,7 @@ struct Window {
     VkExtent2D extent = { 1024, 768 };
     const char *title = "Vulkan Application";
 
+    void create();
     void cleanup();
 };
 
@@ -24,15 +25,10 @@ struct Frame {
 	VkFence renderFinishedFence;
 	VkCommandPool commandPool;
 	VkCommandBuffer mainCommandBuffer;
+    VkDevice device;
 
-    void cleanup(VkDevice device);
-};
-
-struct BindlessPushConstants {
-    VkDeviceAddress camera;
-    VkDeviceAddress instances;
-    VkDeviceAddress materials;
-    VkDeviceAddress lights;
+    void create(VkDevice device, uint32_t graphicsQueueIndex);
+    void cleanup();
 };
 
 class Engine {
@@ -63,11 +59,7 @@ protected:
 
     void waitIdle();
 
-	SDL_Window *window = nullptr;
-    VkExtent2D windowSize = { 1024, 768 };
-    const char *windowTitle = "Vulkan Application";
-    float lagInMillisecs;
-
+    Window window;
     Vulkan vulkan;
 	Swapchain swapchain;
     Scene scene;
@@ -78,6 +70,7 @@ protected:
     std::vector<VkSemaphore> renderFinishedSemaphores; // one per swapchain image
 	uint32_t currentImageIndex = 0;
 	uint32_t currentFrameIndex = 0;
+    float lagInMillisecs;
 
 private:
 	void createWindow();
