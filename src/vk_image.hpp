@@ -46,7 +46,7 @@ VkPipelineStageFlags getPipelineStageFlags(VkImageLayout layout);
 
 Image createImage(VkImageCreateInfo imageInfo, VmaAllocationCreateInfo allocInfo, VmaAllocator allocator);
 
-void changeImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkImageSubresourceRange range);
+VkImageMemoryBarrier2 changeImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkImageSubresourceRange range, bool execBarrier = true);
 void copyImageToImage(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D srcSize, VkExtent2D dstSize, VkFilter filter);
 
 TextureData loadTextureDataStb(const std::string &path, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB);

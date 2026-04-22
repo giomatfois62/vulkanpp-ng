@@ -99,8 +99,8 @@ Image vke::createImage(VkImageCreateInfo imageInfo, VmaAllocationCreateInfo allo
     return image;
 }
 
-void vke::changeImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
-    VkImageSubresourceRange range)
+VkImageMemoryBarrier2 vke::changeImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
+    VkImageSubresourceRange range, bool execBarrier)
 {
     VkPipelineStageFlags srcStage  = getPipelineStageFlags(oldLayout);
     VkPipelineStageFlags dstStage  = getPipelineStageFlags(newLayout);
@@ -119,13 +119,17 @@ void vke::changeImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout ol
         .subresourceRange = range
     };
 
-    VkDependencyInfo depInfo{
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &imageBarrier
-    };
+    if (execBarrier) {
+        VkDependencyInfo depInfo{
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers = &imageBarrier
+        };
 
-    vkCmdPipelineBarrier2(cmd, &depInfo);
+        vkCmdPipelineBarrier2(cmd, &depInfo);
+    }
+
+    return imageBarrier;
 }
 
 
